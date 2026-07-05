@@ -56,7 +56,12 @@ Key server behaviors:
 
 ## Deployment
 
-Two supported shapes (guide §10–11):
+**Recommended: the self-contained kit** — everything in `~/lobbylink`
+on the server, run as a systemd user service, with dual entry points
+(Apache subpath proxy + standalone `:4443`). Step-by-step guide and
+all scripts: [deploy/selfcontained/README.md](deploy/selfcontained/README.md).
+
+Alternative system-wide shapes from the guide (§10–11):
 
 1. **Apache reverse proxy** — Apache owns `:443`, proxies `/` and `/ws`
    to Go on `127.0.0.1:8787`: `scripts/setup-apache-proxy.sh <domain>`.
