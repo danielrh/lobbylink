@@ -14,20 +14,46 @@ APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 DIR="$APP_HOME/lobbylink"
 CONF=/etc/turnserver.conf
 
+CHANGED=0
+backup_once() {
+    if [ "$CHANGED" = 0 ]; then
+        cp -a "$CONF" "$CONF.bak.$(date +%Y%m%d%H%M%S)"
+        CHANGED=1
+    fi
+}
+
 if grep -q '^use-auth-secret' "$CONF"; then
-    echo "use-auth-secret already enabled; nothing to do"
-    exit 0
+    echo "use-auth-secret already enabled"
+else
+    SECRET="$(cat "$DIR/turn-secret")"
+    backup_once
+    {
+        echo ""
+        echo "# Added by lobbylink enable-turn-auth.sh"
+        echo "use-auth-secret"
+        echo "static-auth-secret=$SECRET"
+    } >> "$CONF"
 fi
 
-SECRET="$(cat "$DIR/turn-secret")"
-cp -a "$CONF" "$CONF.bak.$(date +%Y%m%d%H%M%S)"
-{
-    echo ""
-    echo "# Added by lobbylink enable-turn-auth.sh"
-    echo "use-auth-secret"
-    echo "static-auth-secret=$SECRET"
-} >> "$CONF"
-systemctl restart coturn
+# An active realm= line is required: without it coturn sends 401
+# challenges with an EMPTY realm, which browsers (Chrome: "Setting
+# realm to the empty string, this is not supported") reject, so TURN
+# allocation never succeeds even though permissive clients work.
+if grep -q '^realm=' "$CONF"; then
+    echo "realm already set: $(grep '^realm=' "$CONF" | head -1)"
+else
+    backup_once
+    {
+        echo "# Browsers reject 401 challenges with an empty realm."
+        echo "realm=$DOMAIN"
+    } >> "$CONF"
+fi
+
+if [ "$CHANGED" = 1 ]; then
+    systemctl restart coturn
+else
+    echo "coturn config unchanged"
+fi
 
 # Restore the full ICE URL list now that relay auth will succeed.
 sed -i 's|^urls = .*|urls = ["stun:'"$DOMAIN"':3478", "turn:'"$DOMAIN"':3478?transport=udp", "turn:'"$DOMAIN"':3478?transport=tcp"]|' "$DIR/config.toml"

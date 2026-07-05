@@ -9,8 +9,12 @@ with coturn fallback: a Go signaling/lobby server plus TypeScript
 
 - **Go server** (`cmd/p2p-lobby-server`, `internal/`): implemented, with
   unit + integration tests.
-- **TypeScript client** (`clients/ts`): next.
-- **Rust client** (`clients/rust`): after TypeScript.
+- **TypeScript client** (`clients/ts`): implemented — zero runtime
+  dependencies, built by plain `tsc` (`make` in `clients/ts`), browser
+  test suite passes against production including forced-TURN relay.
+  See [clients/ts/README.md](clients/ts/README.md) for the API and the
+  wire/framing contract.
+- **Rust client** (`clients/rust`): next.
 
 ## Build & test
 
