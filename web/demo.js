@@ -8,6 +8,18 @@ function log(...args) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+// Works at any mount point (/, /lobbylink/, ...): ask the server for its
+// wsUrl, falling back to this page's own directory.
+async function serverUrl() {
+  try {
+    const cfg = await (await fetch("./config.json")).json();
+    if (cfg.wsUrl) return cfg.wsUrl;
+  } catch {
+    // fall through
+  }
+  return new URL(".", location.href).href;
+}
+
 let game = null;
 
 function setConnected(on) {
@@ -25,7 +37,7 @@ document.getElementById("connect").addEventListener("click", async () => {
   const code = document.getElementById("code").value.trim();
   try {
     game = await P2P.P2PGame.connect({
-      server: location.origin,
+      server: await serverUrl(),
       code,
       create: {
         maxPlayers: Number(document.getElementById("maxPlayers").value),
