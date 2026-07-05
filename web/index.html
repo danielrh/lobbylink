@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P2P Lobby Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    fieldset { margin-bottom: 1rem; }
+    label { display: inline-block; min-width: 9rem; }
+    input[type="text"], input[type="number"] { width: 12rem; }
+    #log { border: 1px solid #ccc; padding: 0.5rem; height: 16rem; overflow-y: auto;
+           font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; }
+    button { margin: 0.2rem; }
+  </style>
+</head>
+<body>
+  <h1>P2P Lobby Demo</h1>
+  <fieldset>
+    <legend>Room</legend>
+    <div><label for="code">Room code</label><input type="text" id="code" value="TEST01"></div>
+    <div><label for="maxPlayers">Max players</label><input type="number" id="maxPlayers" value="2" min="1" max="32"></div>
+    <div><label for="waitUntilFull">Wait until full</label><input type="checkbox" id="waitUntilFull" checked></div>
+    <div>
+      <button id="connect">Create / Join</button>
+      <button id="leave" disabled>Leave</button>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Send</legend>
+    <input type="text" id="message" value="hello">
+    <button id="sendReliable" disabled>Send reliable</button>
+    <button id="sendBestEffort" disabled>Broadcast best-effort</button>
+  </fieldset>
+  <div id="log"></div>
+  <script type="module" src="./demo.js"></script>
+</body>
+</html>

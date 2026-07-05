@@ -1,0 +1,74 @@
+# lobbylink
+
+Instant lobby-based multiplayer connectivity via WebRTC DataChannels
+with coturn fallback: a Go signaling/lobby server plus TypeScript
+(browser) and Rust (native) client libraries. Full design spec:
+[lobbylink_implementation_guide.md](lobbylink_implementation_guide.md).
+
+## Status
+
+- **Go server** (`cmd/p2p-lobby-server`, `internal/`): implemented, with
+  unit + integration tests.
+- **TypeScript client** (`clients/ts`): next.
+- **Rust client** (`clients/rust`): after TypeScript.
+
+## Build & test
+
+```bash
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(git rev-parse --short HEAD)" \
+  -o dist/p2p-lobby-server ./cmd/p2p-lobby-server
+go test -race ./...
+```
+
+The binary embeds `web/` (demo page + browser client bundle). Build the
+TypeScript client first when you want the real `web/p2p-client.js`
+instead of the placeholder.
+
+## Run (dev)
+
+```bash
+./dist/p2p-lobby-server \
+  --listen-http 127.0.0.1:8787 \
+  --allowed-origin http://localhost:8787,http://127.0.0.1:8787 \
+  --public-url http://127.0.0.1:8787
+```
+
+Then open http://127.0.0.1:8787/ for the demo page, or check
+`/healthz` and `/config.json`.
+
+## Configuration
+
+Defaults < `--config /etc/p2p-lobby/config.toml` < CLI flags. See the
+config example in the implementation guide §2.3; every key there is
+supported, and unknown keys are rejected so typos fail fast.
+
+Key server behaviors:
+
+- WebSocket `Origin` must be on the global allowlist (or an app
+  allowlist for `appId` joins); native clients without an Origin header
+  are only accepted with `--allow-no-origin` / `allow_no_origin = true`.
+- Stable player IDs `0..maxPlayers-1`; disconnects preserve slots.
+- Hidden resume tokens (rotated on every resume/claim; only hashes are
+  stored server-side) plus timeout-based slot claiming (`claim_after`,
+  default 40s of silence; any WS message counts as liveness).
+- TURN credentials are minted per player with coturn's REST-secret
+  scheme (`use-auth-secret`).
+
+## Deployment
+
+Two supported shapes (guide §10–11):
+
+1. **Apache reverse proxy** — Apache owns `:443`, proxies `/` and `/ws`
+   to Go on `127.0.0.1:8787`: `scripts/setup-apache-proxy.sh <domain>`.
+2. **Direct HTTPS on :4443** — Go serves TLS itself with copied
+   Let's Encrypt certs: `scripts/setup-direct-4443.sh <domain>`.
+
+Common steps first:
+
+```bash
+sudo scripts/install-common.sh <domain>       # user, dirs, secret, config
+sudo scripts/copy-certs.sh <domain>           # also a certbot deploy hook
+sudo scripts/setup-coturn.sh <domain> <ip>    # coturn with shared secret
+```
+
+Templates for systemd/Apache/coturn live in `deploy/`.

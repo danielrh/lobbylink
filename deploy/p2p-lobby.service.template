@@ -1,0 +1,19 @@
+[Unit]
+Description=P2P Lobby Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=p2plobby
+Group=p2plobby
+ExecStart=/usr/local/bin/p2p-lobby-server <ARGS_RENDERED_BY_SETUP_SCRIPT>
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/p2p-lobby /var/log/p2p-lobby
+
+[Install]
+WantedBy=multi-user.target

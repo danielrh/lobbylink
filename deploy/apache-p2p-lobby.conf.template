@@ -1,0 +1,18 @@
+<VirtualHost *:443>
+    ServerName <DOMAIN>
+
+    SSLEngine On
+    SSLCertificateFile /etc/letsencrypt/live/<DOMAIN>/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/<DOMAIN>/privkey.pem
+
+    ProxyRequests Off
+    ProxyPreserveHost On
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port "443"
+
+    ProxyPass        "/ws" "ws://127.0.0.1:8787/ws"
+    ProxyPassReverse "/ws" "ws://127.0.0.1:8787/ws"
+
+    ProxyPass        "/" "http://127.0.0.1:8787/"
+    ProxyPassReverse "/" "http://127.0.0.1:8787/"
+</VirtualHost>
