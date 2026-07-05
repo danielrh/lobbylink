@@ -1,0 +1,35 @@
+# LobbyLink self-contained config. Rendered by build-and-upload.sh
+# (__DOMAIN__ / __HOME__ substituted). Dual entry points: Apache
+# subpath proxy via listen_http, standalone TLS via listen_https —
+# blank either one to disable that mode.
+[server]
+public_url = "https://__DOMAIN__/lobbylink"
+listen_http = "127.0.0.1:8787"
+listen_https = ":4443"
+cert = "__HOME__/lobbylink/certs/fullchain.pem"
+key = "__HOME__/lobbylink/certs/privkey.pem"
+behind_proxy = true
+trusted_proxies = ["127.0.0.1"]
+
+[security]
+allowed_origins = [
+  "https://__DOMAIN__", "https://__DOMAIN__:4443",
+  "https://graphics.stanford.edu",
+  "https://anderrh.github.io", "https://danielrh.github.io",
+  "http://localhost:5173", "http://127.0.0.1:5173",
+]
+max_ws_message_bytes = 1048576
+
+[turn]
+enabled = true
+realm = "__DOMAIN__"
+shared_secret_file = "__HOME__/lobbylink/turn-secret"
+ttl = "3600s"
+urls = ["stun:__DOMAIN__:3478", "turn:__DOMAIN__:3478?transport=udp", "turn:__DOMAIN__:3478?transport=tcp"]
+
+[rooms]
+empty_ttl = "300s"
+max_ttl = "24h"
+max_rooms = 10000
+max_players_hard = 32
+claim_after = "40s"

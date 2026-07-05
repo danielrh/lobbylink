@@ -1,0 +1,12 @@
+# LobbyLink reverse proxy under <BASE_PATH> -> Go server on 127.0.0.1:8787.
+# Include this inside an existing TLS <VirtualHost>. Requires modules:
+# proxy proxy_http proxy_wstunnel headers.
+ProxyPreserveHost On
+RequestHeader set X-Forwarded-Proto "https"
+RequestHeader set X-Forwarded-Port "443"
+RequestHeader set X-Forwarded-Prefix "<BASE_PATH>"
+RedirectMatch 301 ^<BASE_PATH>$ <BASE_PATH>/
+ProxyPass        "<BASE_PATH>/ws" "ws://127.0.0.1:8787/ws"
+ProxyPassReverse "<BASE_PATH>/ws" "ws://127.0.0.1:8787/ws"
+ProxyPass        "<BASE_PATH>/"   "http://127.0.0.1:8787/"
+ProxyPassReverse "<BASE_PATH>/"   "http://127.0.0.1:8787/"

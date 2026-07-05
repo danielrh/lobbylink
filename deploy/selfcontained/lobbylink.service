@@ -1,0 +1,11 @@
+[Unit]
+Description=LobbyLink P2P Lobby Server (user service)
+After=network-online.target
+
+[Service]
+ExecStart=%h/lobbylink/p2p-lobby-server --config %h/lobbylink/config.toml
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
