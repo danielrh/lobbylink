@@ -113,24 +113,41 @@ func (s *Server) originKnown(origin string) bool {
 	return false
 }
 
-// wsURL derives the public WebSocket URL, preferring the configured
-// public_url and falling back to the request host.
+// wsURL derives the WebSocket URL for the entry point this request
+// actually used, so a server running both direct-TLS and
+// behind-Apache-subpath modes advertises the right URL on each:
+// scheme from TLS state or trusted X-Forwarded-Proto, host from the
+// request (Apache should ProxyPreserveHost), and path prefix from
+// trusted X-Forwarded-Prefix (e.g. "/lobbylink"). public_url is the
+// fallback when the request carries no host.
 func (s *Server) wsURL(r *http.Request) string {
-	if s.cfg.Server.PublicURL != "" {
-		u, err := url.Parse(s.cfg.Server.PublicURL)
-		if err == nil {
+	if r.Host == "" {
+		if u, err := url.Parse(s.cfg.Server.PublicURL); err == nil && u.Host != "" {
 			scheme := "ws"
 			if u.Scheme == "https" {
 				scheme = "wss"
 			}
-			return scheme + "://" + u.Host + "/ws"
+			return scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/") + "/ws"
 		}
 	}
 	scheme := "ws"
 	if r.TLS != nil || s.headerProto(r) == "https" {
 		scheme = "wss"
 	}
-	return scheme + "://" + r.Host + "/ws"
+	return scheme + "://" + r.Host + s.headerPrefix(r) + "/ws"
+}
+
+// headerPrefix returns a sanitized X-Forwarded-Prefix, honored only
+// from a trusted proxy.
+func (s *Server) headerPrefix(r *http.Request) string {
+	if !s.cfg.Server.BehindProxy || !s.fromTrustedProxy(r) {
+		return ""
+	}
+	p := r.Header.Get("X-Forwarded-Prefix")
+	if p == "" || !strings.HasPrefix(p, "/") || strings.ContainsAny(p, " \t\"\\") {
+		return ""
+	}
+	return strings.TrimSuffix(p, "/")
 }
 
 // headerProto returns X-Forwarded-Proto but only when the direct peer

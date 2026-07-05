@@ -190,11 +190,59 @@ func TestConfigJSONAndCORS(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["wsUrl"] != "wss://pqrstuvw.xyz:4443/ws" {
-		t.Errorf("wsUrl = %v", body["wsUrl"])
+	// wsUrl reflects how the request arrived: plain HTTP to the test
+	// server host here, regardless of public_url.
+	if body["wsUrl"] != "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws" {
+		t.Errorf("wsUrl = %v (ts.URL %s)", body["wsUrl"], ts.URL)
 	}
 	if body["version"] != "test" {
 		t.Errorf("version = %v", body["version"])
+	}
+
+	// Behind a trusted proxy, X-Forwarded-Proto and X-Forwarded-Prefix
+	// (as Apache sets for the /lobbylink subpath) shape the ws URL.
+	// httptest requests come from 127.0.0.1, which is a trusted proxy
+	// in the default config.
+	ts3, _ := newTestServer(t, func(c *config.Config) {
+		c.Server.BehindProxy = true
+	})
+	req3, _ := http.NewRequest("GET", ts3.URL+"/config.json", nil)
+	req3.Host = "pqrstuvw.xyz"
+	req3.Header.Set("X-Forwarded-Proto", "https")
+	req3.Header.Set("X-Forwarded-Prefix", "/lobbylink")
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	var body3 map[string]any
+	if err := json.NewDecoder(resp3.Body).Decode(&body3); err != nil {
+		t.Fatal(err)
+	}
+	if body3["wsUrl"] != "wss://pqrstuvw.xyz/lobbylink/ws" {
+		t.Errorf("proxied wsUrl = %v", body3["wsUrl"])
+	}
+
+	// The same headers from an untrusted peer are ignored.
+	ts4, _ := newTestServer(t, func(c *config.Config) {
+		c.Server.BehindProxy = true
+		c.Server.TrustedProxies = []string{"192.0.2.1"}
+	})
+	req4, _ := http.NewRequest("GET", ts4.URL+"/config.json", nil)
+	req4.Host = "spoof.example"
+	req4.Header.Set("X-Forwarded-Proto", "https")
+	req4.Header.Set("X-Forwarded-Prefix", "/evil")
+	resp4, err := http.DefaultClient.Do(req4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	var body4 map[string]any
+	if err := json.NewDecoder(resp4.Body).Decode(&body4); err != nil {
+		t.Fatal(err)
+	}
+	if body4["wsUrl"] != "ws://spoof.example/ws" {
+		t.Errorf("untrusted-proxy wsUrl = %v", body4["wsUrl"])
 	}
 
 	// Disallowed origin gets no ACAO echo.
