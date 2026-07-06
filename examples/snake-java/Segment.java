@@ -21,9 +21,11 @@ public class Segment {
     return Math.sqrt(Math.abs(this.x-segment.x)*Math.abs(this.x-segment.x)+Math.abs(this.y-segment.y)*Math.abs(this.y-segment.y));
   }
   public static void main(String[] args){
-    StdDraw.setCanvasSize(1000,1000);
-    StdDraw.enableDoubleBuffering();
-    StdDraw.setScale(-300, 300);
+    // Renderer swapped from Princeton's GPLv3 StdDraw to the small BSD MiniDraw;
+    // the worm is otherwise unchanged. setCanvasSize + enableDoubleBuffering +
+    // setScale fold into the MiniDraw constructor, and the once-infinite loop now
+    // ends when the window is closed.
+    MiniDraw md = new MiniDraw("wildlife — worm", 1000, -300, 300);
     Segment[] segments = new Segment[3000];
     for(int i = 0; i < segments.length; i += 1){
       if(i == 1 || i == 2){
@@ -31,20 +33,20 @@ public class Segment {
       }else{
         segments[i] = new Segment(0, 0, ((double)(segments.length-i))/1000);
       }
-      
     }
-    for(int i = 0; true; i += 1){
-      StdDraw.clear();
-      segments[0].x = StdDraw.mouseX();
-      segments[0].y = StdDraw.mouseY();
+    while(md.isOpen()){
+      md.clear(java.awt.Color.WHITE);
+      md.setPenColor(java.awt.Color.BLACK);
+      segments[0].x = md.mouseX();
+      segments[0].y = md.mouseY();
       for(int j = 1; j < segments.length; j += 1){
         segments[j].attach(segments[j-1]);
       }
       for(int j = 0; j < segments.length; j += 1){
-        StdDraw.circle(segments[j].x,segments[j].y,segments[j].size);
+        md.circle(segments[j].x,segments[j].y,segments[j].size);
       }
-      StdDraw.show();
-      StdDraw.pause(10);
+      md.show();
+      md.pause(10);
     }
   }
 }
