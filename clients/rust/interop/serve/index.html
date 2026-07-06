@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>lobbylink rust-wasm harness</title></head>
+<body>
+<pre id="out">running...</pre>
+<script type="module">
+import init, { run_mode } from './pkg/wasmtest.js';
+import { P2PGame as TSP2PGame } from './p2p-client.js';
+
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') || 'pair';
+const server = q.get('server');
+const code = q.get('code');
+const log = (m) => console.log(m);
+
+// TS-client responder: echo everything; reliable "quit" -> close.
+async function tsEcho() {
+  const game = await TSP2PGame.connect({
+    server, code, create: { maxPlayers: 2 }, storage: 'session',
+  });
+  log(`TESTLOG ts responder joined as ${game.selfId}`);
+  game.onEvent((ev) => {
+    if (ev.type !== 'message') { log(`TESTLOG ts responder event ${ev.type}`); return; }
+    const text = new TextDecoder().decode(ev.data);
+    if (ev.kind === 'reliable' && text === 'quit') {
+      game.close();
+      log('TESTLOG RESPONDER-DONE');
+      return;
+    }
+    if (ev.kind === 'reliable') {
+      game.sendReliable(ev.from, ev.data).catch((e) => log(`TESTLOG FAIL ts echo: ${e}`));
+    } else {
+      game.sendBestEffort(ev.from, ev.data);
+    }
+  });
+}
+
+try {
+  if (mode === 'tsecho') {
+    await tsEcho();
+  } else if (mode === 'tswasm') {
+    // TS echo responder + wasm driver in one page: TS<->wasm interop.
+    await tsEcho();
+    await init();
+    await run_mode('driver', server, code);
+  } else {
+    await init();
+    await run_mode(mode, server, code);
+  }
+  document.getElementById('out').textContent = 'done (see console)';
+} catch (e) {
+  log(`TESTLOG FAIL page error: ${e}`);
+}
+</script>
+</body>
+</html>
