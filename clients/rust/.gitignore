@@ -1,2 +1,5 @@
 /target
 Cargo.lock
+interop/*/target
+interop/*/Cargo.lock
+interop/wasmtest/pkg
