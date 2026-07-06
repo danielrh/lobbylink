@@ -1,0 +1,18 @@
+[package]
+name = "dartroids"
+version = "0.1.0"
+edition = "2021"
+description = "DartRoids: standalone (desktop) trust-based multiplayer asteroids on lobbylink, wire-compatible with the browser example"
+
+[[bin]]
+name = "dartroids"
+path = "src/main.rs"
+
+[dependencies]
+p2p-lobby-client = { path = "../../clients/rust" }
+macroquad = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+bytes = "1"
+
+[profile.dev]
+opt-level = 1

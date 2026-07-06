@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>DartRoids — a lobbylink demo</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060d; font-family: system-ui, sans-serif; }
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+
+  .overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(5, 6, 13, 0.82); z-index: 20; padding: 16px;
+  }
+  .card {
+    background: #0e1326; border: 1px solid #263255; border-radius: 14px; padding: 22px 24px;
+    width: min(420px, 94vw); color: #dfe6ff; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .card h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 0.5px; }
+  .card h1 span { color: #7fe9ff; }
+  .card p.sub { margin: 0 0 18px; color: #94a2c9; font-size: 13px; line-height: 1.5; }
+  label { display: block; font-size: 12px; color: #94a2c9; margin: 12px 0 4px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2c3a63;
+    background: #070b18; color: #eaf0ff; font-size: 15px;
+  }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  button {
+    margin-top: 18px; width: 100%; padding: 13px; border: 0; border-radius: 9px; cursor: pointer;
+    font-size: 16px; font-weight: 700; color: #041018; background: #7fe9ff;
+  }
+  button.ghost { background: transparent; color: #9fb0da; border: 1px solid #2c3a63; font-weight: 500; }
+  #lobbyInfo { white-space: pre-line; color: #cdd8ff; font-size: 15px; line-height: 1.6; min-height: 3em; }
+
+  #hud {
+    position: fixed; top: env(safe-area-inset-top, 10px); left: 12px; z-index: 10;
+    white-space: pre-line; color: #cfe3ff; font-size: 15px; font-weight: 600;
+    text-shadow: 0 1px 3px #000; pointer-events: none;
+  }
+  #toast {
+    position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 10; display: none;
+    background: rgba(10,14,28,0.9); border: 1px solid #2c3a63; color: #eaf0ff;
+    padding: 8px 14px; border-radius: 20px; font-size: 14px; pointer-events: none; max-width: 90vw; text-align: center;
+  }
+  #fire {
+    position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
+    z-index: 10; width: 96px; height: 96px; border-radius: 50%; margin: 0;
+    background: rgba(127,233,255,0.15); border: 2px solid #7fe9ff; color: #7fe9ff;
+    font-size: 15px; font-weight: 800; letter-spacing: 1px; touch-action: none; user-select: none;
+  }
+  #fire:active { background: rgba(127,233,255,0.4); }
+</style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="hud"></div>
+  <div id="toast"></div>
+  <button id="fire">FIRE</button>
+
+  <div id="menu" class="overlay">
+    <div class="card">
+      <h1>Dart<span>Roids</span></h1>
+      <p class="sub">A trust-based multiplayer asteroids clone running peer-to-peer over
+        <b>lobbylink</b>. Share the room code (it's in the URL) and everyone who joins flies in the
+        same field. Wire-compatible with the Rust desktop client.</p>
+      <label for="name">Call sign</label>
+      <input id="name" maxlength="24" placeholder="player" />
+      <div class="row">
+        <div>
+          <label for="code">Room code</label>
+          <input id="code" maxlength="64" value="DARTS" />
+        </div>
+        <div>
+          <label for="maxPlayers">Max players</label>
+          <input id="maxPlayers" type="number" min="2" max="64" value="64" />
+        </div>
+      </div>
+      <label for="server">Server (blank = auto / prod)</label>
+      <input id="server" placeholder="https://pqrstuvw.xyz/lobbylink" />
+      <button id="enter">Enter lobby →</button>
+    </div>
+  </div>
+
+  <div id="lobby" class="overlay" style="display:none">
+    <div class="card">
+      <h1>Lobby</h1>
+      <p class="sub">Others can join with this same link while you wait. Launch whenever you like —
+        late joiners drop straight into the action.</p>
+      <div id="lobbyInfo"></div>
+      <button id="launch">Launch 🚀</button>
+      <button id="copy" class="ghost">Copy invite link</button>
+      <button id="leave" class="ghost">Leave</button>
+    </div>
+  </div>
+
+  <script type="module" src="./dist/game.js"></script>
+</body>
+</html>
