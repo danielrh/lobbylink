@@ -62,11 +62,34 @@ impl Rng {
 #[derive(Clone, Copy)]
 #[allow(dead_code)] // vx/vy kept for wire parity with the TS Asteroid shape
 pub struct Asteroid {
+    /// Stable unique id (spawn-second << shift | index); used for
+    /// locally tracking asteroids the player has shot.
+    pub id: u64,
+    /// Deterministic seed for the asteroid's irregular outline, so every
+    /// client draws the same (non-wobbling) rock. Derived from spawn data,
+    /// not the live position.
+    pub shape: u32,
     pub x: f32,
     pub y: f32,
     pub vx: f32,
     pub vy: f32,
     pub radius: f32,
+}
+
+/// Number of vertices in a rendered asteroid outline.
+pub const ASTEROID_VERTS: usize = 11;
+
+/// Deterministic per-vertex radius multiplier in [0.80, 1.10) for the
+/// asteroid outline. Bit-identical with the TS `asteroidVertex`.
+pub fn asteroid_vertex(shape: u32, i: u32) -> f32 {
+    // lowbias32 integer hash -> [0,1)
+    let mut x = shape ^ i.wrapping_mul(0x9e3779b9);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846ca68b);
+    x ^= x >> 16;
+    0.80 + 0.30 * (x as f32 / 4294967296.0)
 }
 
 /// All asteroids currently near the map at game time `game_ms`.
@@ -89,7 +112,7 @@ fn gen_second(seed: u32, t: u32, game_ms: f64, out: &mut Vec<Asteroid>) {
     let count = 1 + (r.next() * 4.0).floor() as i32;
     let w = WORLD_W as f64;
     let h = WORLD_H as f64;
-    for _ in 0..count {
+    for index in 0..count {
         let edge = (r.next() * 4.0).floor() as i32;
         let radius = 22.0 + r.next() * 40.0;
         let speed = 120.0 + r.next() * 160.0;
@@ -113,6 +136,8 @@ fn gen_second(seed: u32, t: u32, game_ms: f64, out: &mut Vec<Asteroid>) {
             continue;
         }
         out.push(Asteroid {
+            id: ((t as u64) << 8) | index as u64,
+            shape: st ^ (index as u32).wrapping_mul(0x9e3779b9),
             x: x as f32,
             y: y as f32,
             vx: vx as f32,

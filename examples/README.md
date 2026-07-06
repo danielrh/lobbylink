@@ -6,22 +6,29 @@ A tiny, trust-based, server-less multiplayer **asteroids** clone that shows off
 There is no game server — every client simulates itself and broadcasts its
 position + bullets over lobbylink's peer-to-peer DataChannels 16×/second.
 
-Two **independent, wire-compatible** codebases:
+Three **independent, wire-compatible** codebases:
 
 | dir | language | runtime | how to play |
 |-----|----------|---------|-------------|
 | [`asteroids-web/`](asteroids-web) | TypeScript | any browser incl. **Safari mobile** | arrows + space, or drag-to-steer + FIRE button |
 | [`asteroids-native/`](asteroids-native) | Rust | standalone desktop (macroquad) | arrows/WASD + space, or mouse-drag + FIRE |
+| [`asteroids-wasm/`](asteroids-wasm) | Rust → **WebAssembly** | any browser (web-sys Canvas 2D) | arrows/WASD + space, or drag-to-steer + FIRE |
 
-A browser player and a Rust desktop player in the **same room code** see and
-shoot each other. The exact bytes on the wire — plus the deterministic asteroid
-field and shared clock — are specified once in **[PROTOCOL.md](PROTOCOL.md)** and
-mirrored by both.
+The two browser builds are different demos of the *same* game: `asteroids-web`
+uses the TypeScript client, `asteroids-wasm` compiles the Rust game (and Rust
+lobbylink client) to wasm. All three share the same wire protocol.
+
+Any of them in the **same room code** see and shoot each other — a TypeScript
+browser tab, a Rust/wasm browser tab, and a native Rust desktop window all in
+one field. The exact bytes on the wire — plus the deterministic asteroid field
+and shared clock — are specified once in **[PROTOCOL.md](PROTOCOL.md)** and
+mirrored by all three.
 
 ## What it demonstrates about lobbylink
 
 - **Lobby by link.** The room code lives in the URL (web) or `--code` (native);
-  share it and up to `maxPlayers` (default **64**) pilots join the same room.
+  share it and up to `maxPlayers` (default **32**, the test server's
+  `max_players_hard` cap) pilots join the same room.
   Late joiners drop straight in — every packet is a full snapshot, so there is
   no state to catch up on.
 - **Both channel kinds.** Unreliable **best-effort** for 16 Hz position/bullet

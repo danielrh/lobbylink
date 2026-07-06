@@ -14,7 +14,7 @@ use protocol as P;
 
 use bytes::Bytes;
 use macroquad::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ---- game <-> net channel messages ----------------------------------------
 
@@ -254,6 +254,9 @@ struct Game {
     seen_kills: HashMap<u16, u32>,
     clock_offset_ms: f64,
     roster: Vec<(u16, bool, bool)>,
+    /// Asteroid ids this player has shot; asteroids are deterministic so we
+    /// just hide/ignore them locally (no wire change, stays interoperable).
+    destroyed: HashSet<u64>,
     send_acc: f64,
     clock_acc: f64,
     status: String,
@@ -263,6 +266,13 @@ struct Game {
 impl Game {
     fn game_ms(&self) -> f64 {
         wall_ms() + self.clock_offset_ms
+    }
+
+    /// The deterministic field minus asteroids this client has shot.
+    fn live_asteroids(&self) -> Vec<P::Asteroid> {
+        let mut v = P::asteroids_at(self.seed, self.game_ms());
+        v.retain(|a| !self.destroyed.contains(&a.id));
+        v
     }
 
     fn is_leader(&self) -> bool {
@@ -365,7 +375,7 @@ impl Game {
     }
 
     fn safe_spawn(&self) -> (f32, f32) {
-        let field = P::asteroids_at(self.seed, self.game_ms());
+        let field = self.live_asteroids();
         let mut best = (P::WORLD_W / 2.0, P::WORLD_H / 2.0);
         let mut best_clear = -1.0f32;
         for _ in 0..48 {
@@ -393,7 +403,9 @@ impl Game {
         self.me.alive = false;
         self.me.thrusting = false;
         self.me.dead_until = t + P::RESPAWN_DELAY as f64;
-        self.me.bullets.clear();
+        // NB: bullets are intentionally NOT cleared here — a shot already in
+        // flight when you die still counts, so mutual/return fire is fair
+        // instead of "whoever lands the first hit erases the other's bullets".
         match shooter {
             Some(s) => {
                 self.my_kill_seq += 1;

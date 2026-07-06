@@ -13,7 +13,8 @@ cargo run -- --code DARTS --name rustpilot
 #   --server URL   lobbylink endpoint (default https://pqrstuvw.xyz/lobbylink)
 #   --code   CODE  room code (default DARTS)
 #   --name   NAME  call sign (default rustpilot)
-#   --max    N     maxPlayers when creating the room (default 64)
+#   --max    N     maxPlayers when creating the room (default 32; the test
+#                  server caps new rooms at max_players_hard = 32)
 ```
 
 On Linux the macroquad window needs the usual GL/X11 (or Wayland) runtime
