@@ -1,0 +1,121 @@
+// lobbylink Java client.
+//
+// The end product is a small FOLDER of jars (build/lib/) that a beginner copies
+// into their project's lib/ folder and builds a multiplayer game against with
+// plain `javac`. Keeping the dependencies as separate jars (rather than one
+// shaded fat jar) means a security update to any single jar — most importantly
+// the native WebRTC library, webrtc-java — is a drop-in file replacement, no
+// rebuild required.
+//
+//   ./gradlew lib                 # build/lib/ with the native lib for THIS machine
+//   ./gradlew lib -Pplatforms=all # build/lib/ that runs on every supported OS/arch
+//   ./gradlew distZip             # build/distributions/lobbylink-client-<v>-lib.zip
+//
+// Then, from your game's directory (with the jars copied into ./lib):
+//   javac -cp "lib/*" MyGame.java
+//   java  -cp "lib/*:." MyGame          (use ';' instead of ':' on Windows)
+//
+// The `lib/*` classpath wildcard picks up every jar in the folder, so the
+// command line never changes as you update the jars inside it.
+
+plugins {
+    id 'java'
+    id 'java-library'
+}
+
+group = 'xyz.lobbylink'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+}
+
+def webrtcVersion = '0.14.0'
+
+// --- native-library platform selection ------------------------------------
+// webrtc-java ships one native jar per platform (classifier). Its POM tries to
+// pick one via OS-activated Maven profiles, which Gradle does not evaluate, so
+// we choose the classifier(s) ourselves.
+def allClassifiers = [
+    'linux-x86_64', 'linux-aarch64', 'linux-aarch32',
+    'macos-x86_64', 'macos-aarch64',
+    'windows-x86_64',
+]
+
+static String hostClassifier() {
+    def os = System.getProperty('os.name').toLowerCase()
+    def arch = System.getProperty('os.arch').toLowerCase()
+    def family = os.startsWith('mac') ? 'macos' : os.startsWith('win') ? 'windows' : 'linux'
+    def a
+    switch (arch) {
+        case ['amd64', 'x86_64', 'x86-64']: a = 'x86_64'; break
+        case ['aarch64', 'arm64']:          a = 'aarch64'; break
+        case ['arm', 'aarch32']:            a = 'aarch32'; break
+        default:                            a = 'x86_64'; break
+    }
+    return "${family}-${a}"
+}
+
+def selected = (project.findProperty('platforms') ?: 'host')
+def nativeClassifiers = (selected == 'all') ? allClassifiers : [hostClassifier()]
+
+dependencies {
+    // Compile against the pure-Java API. transitive=false skips the POM's
+    // self-dependency on an unresolved ${platform.classifier}.
+    api("dev.onvoid.webrtc:webrtc-java:${webrtcVersion}") { transitive = false }
+    // The native library/libraries, only needed at run time.
+    nativeClassifiers.each { c ->
+        runtimeOnly "dev.onvoid.webrtc:webrtc-java:${webrtcVersion}:${c}"
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// What a beginner actually uses: a folder of separate jars — our client plus
+// webrtc-java and its native library — droppable onto a `-cp "lib/*"` classpath.
+tasks.register('lib', Sync) {
+    into layout.buildDirectory.dir('lib')
+    from tasks.named('jar')            // lobbylink-client-<version>.jar (our code)
+    from configurations.runtimeClasspath  // webrtc-java + native lib jar(s)
+    // A short usage note dropped alongside the jars.
+    doLast {
+        file(layout.buildDirectory.dir('lib').get().asFile).mkdirs()
+        file(layout.buildDirectory.file('lib/README.txt')).text = """\
+lobbylink Java client — copy every jar in this folder into your game's lib/ folder,
+then build and run with the classpath wildcard:
+
+  javac -cp "lib/*" MyGame.java
+  java  -cp "lib/*:." MyGame        (use ';' instead of ':' on Windows)
+
+To pick up a security update, just replace the relevant jar in place — the
+webrtc-java-<version>-<platform>.jar carries the native WebRTC library.
+"""
+    }
+}
+
+// A zip of the lib/ folder, for handing to someone who is not running Gradle.
+tasks.register('distZip', Zip) {
+    dependsOn 'lib'
+    archiveFileName = "lobbylink-client-${project.version}-lib.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    from layout.buildDirectory.dir('lib')
+    into 'lib'
+}
+
+// `./gradlew build` also assembles the lib/ folder.
+tasks.named('assemble') { dependsOn('lib') }
