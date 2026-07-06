@@ -18,6 +18,12 @@ The two browser builds are different demos of the *same* game: `asteroids-web`
 uses the TypeScript client, `asteroids-wasm` compiles the Rust game (and Rust
 lobbylink client) to wasm. All three share the same wire protocol.
 
+> **Looking for a Java example?** [`snake-java/`](snake-java) is a separate game —
+> a multiplayer worm built on the [Java client](../clients/java) — showing the
+> same lobbylink ideas (lobby by link, best-effort broadcasts, a deterministic
+> field driven by a shared clock and an automatic clock leader). Build it with
+> plain `javac`; no build tool needed.
+
 Any of them in the **same room code** see and shoot each other — a TypeScript
 browser tab, a Rust/wasm browser tab, and a native Rust desktop window all in
 one field. The exact bytes on the wire — plus the deterministic asteroid field
