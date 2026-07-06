@@ -770,7 +770,9 @@ fn parse_args() -> (String, String, String, u16) {
     let mut server = "https://pqrstuvw.xyz/lobbylink".to_string();
     let mut code = "DARTS".to_string();
     let mut name = "rustpilot".to_string();
-    let mut max: u16 = 64;
+    // The server caps new rooms at max_players_hard (32 on the test server);
+    // requesting more makes creation fail.
+    let mut max: u16 = 32;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {

@@ -109,7 +109,9 @@ async function resolveServer(configured: string): Promise<string> {
 async function enterLobby(): Promise<void> {
   const code = ($("code") as HTMLInputElement).value.trim() || "DARTS";
   myName = (($("name") as HTMLInputElement).value.trim() || "player").slice(0, 24);
-  const maxPlayers = Math.max(2, Math.min(64, Number(($("maxPlayers") as HTMLInputElement).value) || 64));
+  // The server enforces a hard cap (max_players_hard, 32 on the test server);
+  // asking for more makes room creation fail, so clamp to it.
+  const maxPlayers = Math.max(2, Math.min(32, Number(($("maxPlayers") as HTMLInputElement).value) || 32));
   const server = await resolveServer(($("server") as HTMLInputElement).value.trim());
   location.hash = code;
   showToast(`connecting to ${server} …`);
