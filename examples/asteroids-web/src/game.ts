@@ -50,6 +50,7 @@ let myScore = 0;
 let myKillSeq = 0;
 let sendSeq = 0;
 const seenKills = new Map<number, number>(); // shooterView: victimId -> last killSeq counted
+const destroyed = new Set<number>(); // asteroid ids this client has shot (local-only)
 let clockOffsetMs = 0;
 
 const me: Me = {
@@ -265,8 +266,13 @@ function respawn(p: number): void {
   me.fireReady = p;
 }
 
+/** The deterministic field minus asteroids this client has shot. */
+function liveAsteroids(): P.Asteroid[] {
+  return P.asteroidsAt(seed, gameMs()).filter((a) => !destroyed.has(a.id));
+}
+
 function safeSpawn(): { x: number; y: number } {
-  const field = P.asteroidsAt(seed, gameMs());
+  const field = liveAsteroids();
   let best = { x: P.WORLD_W / 2, y: P.WORLD_H / 2 };
   let bestClear = -1;
   for (let i = 0; i < 48; i++) {
@@ -285,7 +291,8 @@ function die(p: number, shooter: number | null): void {
   me.alive = false;
   me.thrusting = false;
   me.deadUntil = p + P.RESPAWN_DELAY * 1000;
-  me.bullets = [];
+  // Bullets intentionally kept: a shot already in flight when you die still
+  // counts, so return fire is fair instead of first-hit-wins.
   if (shooter !== null && game) {
     myKillSeq++;
     game.sendReliable(shooter, P.encodeHit(selfId, myKillSeq)).catch(() => {});
@@ -342,9 +349,37 @@ function update(dt: number): void {
     b.y = wrap(b.y + b.vy * dt, P.WORLD_H);
   }
 
+  const field = liveAsteroids();
+
+  // bullets destroy asteroids (locally; no points, only kills score)
+  const hitIds: number[] = [];
+  me.bullets = me.bullets.filter((b) => {
+    for (const a of field) {
+      if (hitIds.includes(a.id)) continue;
+      if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 < (a.radius + P.BULLET_RADIUS) ** 2) {
+        hitIds.push(a.id);
+        return false;
+      }
+    }
+    return true;
+  });
+  for (const id of hitIds) destroyed.add(id);
+  const oldSec = Math.floor(gameMs() / 1000) - 20;
+  for (const id of destroyed) if (Math.floor(id / 256) < oldSec) destroyed.delete(id);
+
+  // remove my bullets that visually strike a live, vulnerable ship, so a hit
+  // doesn't look like a pass-through (cosmetic; the kill is reported by the
+  // victim over the reliable HIT channel).
+  me.bullets = me.bullets.filter((b) => {
+    for (const r of remotes.values()) {
+      if (r.alive && !r.invuln && torDist(b.x, b.y, r.px, r.py) < P.SHIP_RADIUS + P.BULLET_RADIUS) return false;
+    }
+    return true;
+  });
+
   // collisions — only when vulnerable
   if (me.alive && p >= me.invulnUntil) {
-    for (const a of P.asteroidsAt(seed, gameMs())) {
+    for (const a of field) {
       if (Math.hypot(a.x - me.x, a.y - me.y) < a.radius + P.SHIP_RADIUS) { die(p, null); break; }
     }
   }
@@ -408,7 +443,7 @@ function render(): void {
   ctx.strokeRect(sx(0), sy(0), P.WORLD_W * scale, P.WORLD_H * scale);
   drawStars();
 
-  for (const a of P.asteroidsAt(seed, gameMs())) drawAsteroid(a);
+  for (const a of liveAsteroids()) drawAsteroid(a);
 
   for (const [id, r] of remotes) {
     if (!r.alive) continue;
@@ -477,12 +512,12 @@ function drawAsteroid(a: P.Asteroid): void {
   ctx.save();
   ctx.translate(sx(a.x), sy(a.y));
   ctx.beginPath();
-  const spikes = 9;
-  for (let i = 0; i <= spikes; i++) {
-    const t = (i / spikes) * Math.PI * 2;
-    // deterministic lumpiness from position so it looks like a rock
-    const lump = 0.82 + 0.18 * Math.sin(t * 3 + a.x * 0.05) * Math.cos(t * 2 + a.y * 0.05);
-    const rr = a.radius * lump * scale;
+  // Stable irregular outline seeded by a.shape — identical on every client and
+  // independent of the live position, so the rock does not wobble as it moves.
+  const n = P.ASTEROID_VERTS;
+  for (let i = 0; i <= n; i++) {
+    const t = ((i % n) / n) * Math.PI * 2;
+    const rr = a.radius * P.asteroidVertex(a.shape, i % n) * scale;
     const x = Math.cos(t) * rr, y = Math.sin(t) * rr;
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }

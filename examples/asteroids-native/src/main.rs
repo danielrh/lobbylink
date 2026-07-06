@@ -492,10 +492,51 @@ impl Game {
             b.y = wrap(b.y + b.vy * dt, P::WORLD_H);
         }
 
+        let field = self.live_asteroids();
+
+        // ---- bullets destroy asteroids (locally; no points, only kills score) ----
+        if !self.me.bullets.is_empty() {
+            let mut hit_ids: Vec<u64> = Vec::new();
+            self.me.bullets.retain(|b| {
+                for a in &field {
+                    if hit_ids.contains(&a.id) {
+                        continue;
+                    }
+                    if (a.x - b.x).powi(2) + (a.y - b.y).powi(2)
+                        < (a.radius + P::BULLET_RADIUS).powi(2)
+                    {
+                        hit_ids.push(a.id);
+                        return false; // consume this bullet
+                    }
+                }
+                true
+            });
+            for id in &hit_ids {
+                self.destroyed.insert(*id);
+            }
+        }
+        // prune long-gone destroyed ids (their spawn second is far behind)
+        let old_sec = ((self.game_ms() / 1000.0) as u64).saturating_sub(20);
+        self.destroyed.retain(|id| (id >> 8) >= old_sec);
+
+        // remove my bullets that visually strike a live, vulnerable ship, so a
+        // hit doesn't look like a pass-through. Cosmetic only — the kill is
+        // still decided by the victim and reported over the HIT channel.
+        if !self.me.bullets.is_empty() {
+            let remotes = &self.remotes;
+            self.me.bullets.retain(|b| {
+                !remotes.values().any(|r| {
+                    r.alive
+                        && !r.invuln
+                        && tor_dist(b.x, b.y, r.px, r.py) < P::SHIP_RADIUS + P::BULLET_RADIUS
+                })
+            });
+        }
+
         // ---- collisions (only when vulnerable) ----
         if self.me.alive && t >= self.me.invuln_until {
             let mut hit_asteroid = false;
-            for a in P::asteroids_at(self.seed, self.game_ms()) {
+            for a in &field {
                 if ((a.x - self.me.x).powi(2) + (a.y - self.me.y).powi(2)).sqrt()
                     < a.radius + P::SHIP_RADIUS
                 {
@@ -625,10 +666,8 @@ impl Game {
         let (x0, y0) = v.to_screen(0.0, 0.0);
         draw_rectangle_lines(x0, y0, P::WORLD_W * v.scale, P::WORLD_H * v.scale, 2.0, Color::from_rgba(27, 36, 64, 255));
 
-        for a in P::asteroids_at(self.seed, self.game_ms()) {
-            let (cx, cy) = v.to_screen(a.x, a.y);
-            draw_poly(cx, cy, 9, a.radius * v.scale, 0.0, Color::from_rgba(42, 47, 69, 255));
-            draw_poly_lines(cx, cy, 9, a.radius * v.scale, 0.0, 1.5, Color::from_rgba(90, 100, 136, 255));
+        for a in self.live_asteroids() {
+            draw_asteroid(&v, &a);
         }
 
         let t = get_time();
@@ -752,6 +791,27 @@ fn for_each_wrap(wx: f32, wy: f32, mut draw: impl FnMut(f32, f32)) {
     }
 }
 
+fn draw_asteroid(v: &View, a: &P::Asteroid) {
+    // Stable irregular outline (same seed on every client -> same rock, no wobble).
+    let n = P::ASTEROID_VERTS;
+    let mut pts = Vec::with_capacity(n);
+    for i in 0..n {
+        let th = (i as f32 / n as f32) * std::f32::consts::TAU;
+        let rr = a.radius * P::asteroid_vertex(a.shape, i as u32) * v.scale;
+        let (cx, cy) = v.to_screen(a.x, a.y);
+        pts.push(Vec2::new(cx + th.cos() * rr, cy + th.sin() * rr));
+    }
+    let (ccx, ccy) = v.to_screen(a.x, a.y);
+    let center = Vec2::new(ccx, ccy);
+    let fillc = Color::from_rgba(42, 47, 69, 255);
+    let linec = Color::from_rgba(90, 100, 136, 255);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        draw_triangle(center, pts[i], pts[j], fillc);
+        draw_line(pts[i].x, pts[i].y, pts[j].x, pts[j].y, 1.5, linec);
+    }
+}
+
 fn draw_ship(cx: f32, cy: f32, ang: f32, scale: f32, color: Color, thrust: bool, invuln: bool) {
     let (c, s) = (ang.cos(), ang.sin());
     let xf = |px: f32, py: f32| Vec2::new(cx + (px * c - py * s) * scale, cy + (px * s + py * c) * scale);
@@ -842,6 +902,7 @@ async fn main() {
         seen_kills: HashMap::new(),
         clock_offset_ms: 0.0,
         roster: Vec::new(),
+        destroyed: HashSet::new(),
         send_acc: 0.0,
         clock_acc: 0.0,
         status: String::new(),

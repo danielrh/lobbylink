@@ -58,11 +58,29 @@ function mulberry32(state: number): () => number {
 // ---- asteroids ------------------------------------------------------------
 
 export interface Asteroid {
+  /** stable unique id (spawnSecond*256 + index); for locally tracking shots */
+  id: number;
+  /** deterministic seed for the irregular outline (same rock on every client) */
+  shape: number;
   x: number;
   y: number;
   vx: number;
   vy: number;
   radius: number;
+}
+
+/** Vertices in a rendered asteroid outline. */
+export const ASTEROID_VERTS = 11;
+
+/** Per-vertex radius multiplier in [0.80, 1.10); matches Rust `asteroid_vertex`. */
+export function asteroidVertex(shape: number, i: number): number {
+  let x = (shape ^ Math.imul(i, 0x9e3779b9)) >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x = (x ^ (x >>> 16)) >>> 0;
+  return 0.8 + 0.3 * (x / 4294967296);
 }
 
 /** All asteroids currently near the map at game time `gameMs`. */
@@ -80,7 +98,7 @@ function genSecond(seed: number, t: number, gameMs: number, out: Asteroid[]): vo
   const st = (seed ^ Math.imul(t >>> 0, 0x9e3779b9)) >>> 0;
   const r = mulberry32(st);
   const count = 1 + Math.floor(r() * 4);
-  for (let i = 0; i < count; i++) {
+  for (let index = 0; index < count; index++) {
     const edge = Math.floor(r() * 4);
     const radius = 22 + r() * 40;
     const speed = 120 + r() * 160;
@@ -102,7 +120,11 @@ function genSecond(seed: number, t: number, gameMs: number, out: Asteroid[]): vo
     const y = sy + vy * age;
     const m = radius + 80;
     if (x < -m || x > WORLD_W + m || y < -m || y > WORLD_H + m) continue;
-    out.push({ x, y, vx, vy, radius });
+    out.push({
+      id: t * 256 + index,
+      shape: (st ^ Math.imul(index, 0x9e3779b9)) >>> 0,
+      x, y, vx, vy, radius,
+    });
   }
 }
 

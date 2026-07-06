@@ -163,6 +163,18 @@ and keeping asteroids that are still near the map. Because spawns are always
 `margin` outside the border, a player sitting in the interior is **never**
 clobbered by a freshly spawned asteroid — exactly the guarantee we want.
 
+Each asteroid also carries two derived (never-transmitted) values so all clients
+agree without any messages:
+
+- `id = (spawnSecond << 8) | index` — a stable identity, used only to track
+  which asteroids *this* client has shot (see below).
+- `shape = st ^ (index * 0x9E3779B9)` — a seed for the irregular outline. Every
+  client draws the same rock from `ASTEROID_VERTS` (11) vertices whose radii are
+  `radius * asteroidVertex(shape, i)`, where `asteroidVertex` is the lowbias32
+  integer hash mapped to `[0.80, 1.10)`. The outline depends only on `shape` (not
+  the live position), so rocks don't wobble as they drift, and native/wasm/TS all
+  render identically.
+
 ## Simulation constants (both clients)
 
 | name              | value | meaning                                  |
@@ -185,6 +197,26 @@ clobbered by a freshly spawned asteroid — exactly the guarantee we want.
 Hit test: a foreign bullet kills you if `dist(bullet, you) < SHIP_RADIUS +
 BULLET_RADIUS` and you are `alive && !invulnerable`. An asteroid kills you if
 `dist(asteroid, you) < asteroid.radius + SHIP_RADIUS` (self-destruct, no score
-changes hands). Bullets do not destroy asteroids (would desync the shared
-field). Remote ships and their bullets are dead-reckoned by their last velocity
-between packets and eased toward each fresh STATE.
+changes hands). Remote ships and their bullets are dead-reckoned by their last
+velocity between packets and eased toward each fresh STATE.
+
+A shooter also removes **its own** bullet when it visually strikes a live,
+non-invulnerable remote ship (`dist(bullet, ship) < SHIP_RADIUS + BULLET_RADIUS`,
+against the ship's interpolated position) so a hit doesn't look like a
+pass-through. This is cosmetic — it just stops that bullet being drawn and
+broadcast, so it disappears for everyone; the kill itself is still the victim's
+call, sent over the HIT channel. Bullets pass through invulnerable (blinking)
+ships.
+
+**Shooting asteroids** is local: one of your bullets destroys an asteroid when
+`dist < asteroid.radius + BULLET_RADIUS`, which consumes the bullet and adds the
+asteroid `id` to a local *destroyed* set that hides it from your field
+(rendering, your collisions, respawn placement). It does **not** score — only
+player kills score. Nothing goes on the wire — the field stays a pure function of
+`(seed, second)` for everyone else, so this needs no protocol change and stays
+fully interoperable; clients simply may have shot away different rocks. Destroyed
+ids are pruned once their spawn second is well in the past.
+
+**Dying does not clear your bullets** — a shot already in flight when you die
+still lands, so return fire is fair instead of "whoever lands the first hit
+erases the other's bullets." Your own bullets reset only on respawn.
