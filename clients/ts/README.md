@@ -36,6 +36,7 @@ const game = await P2PGame.connect({
   code: "MYROOM",
   create: { maxPlayers: 4, waitUntilFull: true }, // omit to only join
   storageKey: "mygame-MYROOM",  // persists the hidden resume token
+  storage: "session",           // see below; omit for localStorage
 });
 
 game.onEvent((ev) => {
@@ -51,6 +52,13 @@ game.close();                            // explicit leave, frees the slot
 Reconnecting after a page reload: pass the same `storageKey` (token
 resume, keeps your player ID), or `claimPlayerId` if the token is gone
 and the slot has been silent past the room's `claimAfter`.
+
+`storage` chooses where the token lives. **`"session"` (sessionStorage,
+per-tab) is right whenever two tabs of one browser might join the same
+room** — with the default `"local"` (localStorage, shared by all tabs)
+a second tab finds the first tab's token, "resumes" its slot, and the
+first tab is kicked with `session-superseded`. Use `"local"` only for
+identity that should survive a full browser restart.
 
 `connect` rejects and the API throws `LobbyError` with a stable `code`
 (server codes like `room-full` pass through; client codes include

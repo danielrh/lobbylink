@@ -127,31 +127,39 @@ function signalingUrl(server) {
     u.hash = "";
     return u.toString();
 }
-function loadToken(key) {
-    if (!key)
-        return undefined;
+function pickStorage(kind) {
     try {
-        return globalThis.localStorage?.getItem(key) ?? undefined;
+        return kind === "session" ? globalThis.sessionStorage : globalThis.localStorage;
     }
     catch {
         return undefined;
     }
 }
-function saveToken(key, token) {
+function loadToken(key, kind) {
+    if (!key)
+        return undefined;
+    try {
+        return pickStorage(kind)?.getItem(key) ?? undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function saveToken(key, kind, token) {
     if (!key)
         return;
     try {
-        globalThis.localStorage?.setItem(key, token);
+        pickStorage(kind)?.setItem(key, token);
     }
     catch {
         // Storage unavailable (private mode, quota): resume just won't work.
     }
 }
-function clearToken(key) {
+function clearToken(key, kind) {
     if (!key)
         return;
     try {
-        globalThis.localStorage?.removeItem(key);
+        pickStorage(kind)?.removeItem(key);
     }
     catch {
         // ignore
@@ -430,7 +438,7 @@ export class P2PGame {
                 if (opts.appId)
                     msg.appId = opts.appId;
                 if (opts.claimPlayerId == null) {
-                    const token = opts.resumeToken ?? loadToken(opts.storageKey);
+                    const token = opts.resumeToken ?? loadToken(opts.storageKey, opts.storage);
                     if (token)
                         msg.resumeToken = token;
                     if (opts.create)
@@ -480,13 +488,14 @@ export class P2PGame {
         this.startedFlag = joined.started;
         this.roster = joined.players.map((p) => ({ ...p }));
         this.storageKey = opts.storageKey;
+        this.storageKind = opts.storage;
         const iceServers = [...(joined.iceServers ?? []), ...(opts.iceServers ?? [])];
         this.iceServers = iceServers;
         this.rtcConfig = {
             iceServers,
             ...(opts.forceRelay ? { iceTransportPolicy: "relay" } : {}),
         };
-        saveToken(this.storageKey, joined.resumeToken);
+        saveToken(this.storageKey, this.storageKind, joined.resumeToken);
         ws.onmessage = (ev) => {
             if (typeof ev.data !== "string")
                 return;
@@ -624,7 +633,7 @@ export class P2PGame {
             /* ignore */
         }
         this.teardownPeers();
-        clearToken(this.storageKey);
+        clearToken(this.storageKey, this.storageKind);
         this.listeners.clear();
         this.pendingEvents = [];
     }
@@ -711,8 +720,9 @@ export class P2PGame {
                         // "session-superseded" means our own token resumed from
                         // another tab, which just stored its new token under the
                         // same storageKey — don't clobber it.
-                        if (msg.code !== "session-superseded")
-                            clearToken(this.storageKey);
+                        if (msg.code !== "session-superseded") {
+                            clearToken(this.storageKey, this.storageKind);
+                        }
                     }
                     this.emit({ type: "signaling-closed", code: msg.code, message: msg.message });
                 }

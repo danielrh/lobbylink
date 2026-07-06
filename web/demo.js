@@ -44,6 +44,9 @@ document.getElementById("connect").addEventListener("click", async () => {
         waitUntilFull: document.getElementById("waitUntilFull").checked,
       },
       storageKey: "p2p-demo-" + code,
+      // Per-tab storage: several tabs in one browser must be separate
+      // players, not resume (and so supersede) each other's slot.
+      storage: "session",
     });
     log(`joined room ${code} as player ${game.selfId}/${game.maxPlayers}`);
     setConnected(true);

@@ -85,8 +85,16 @@ export type ConnectOptions = {
   resumeToken?: string;
   /** Claim a specific slot after losing the resume token (claim-slot). */
   claimPlayerId?: number;
-  /** localStorage key for automatic resume-token persistence. */
+  /** Storage key for automatic resume-token persistence. */
   storageKey?: string;
+  /**
+   * Which storage backs storageKey: "local" (default, survives browser
+   * restart, but SHARED BY ALL TABS — two tabs with the same key will
+   * steal each other's slot via token resume) or "session" (per-tab,
+   * survives reload; the right choice when several tabs on one browser
+   * may join the same room).
+   */
+  storage?: "local" | "session";
   /** Extra ICE servers, appended to the ones issued by the server. */
   iceServers?: RTCIceServer[];
   /** Force TURN relay (iceTransportPolicy "relay"); for TURN testing. */
@@ -249,28 +257,38 @@ function signalingUrl(server: string): string {
   return u.toString();
 }
 
-function loadToken(key: string | undefined): string | undefined {
-  if (!key) return undefined;
+type StorageKind = "local" | "session";
+
+function pickStorage(kind: StorageKind | undefined): Storage | undefined {
   try {
-    return globalThis.localStorage?.getItem(key) ?? undefined;
+    return kind === "session" ? globalThis.sessionStorage : globalThis.localStorage;
   } catch {
     return undefined;
   }
 }
 
-function saveToken(key: string | undefined, token: string): void {
+function loadToken(key: string | undefined, kind: StorageKind | undefined): string | undefined {
+  if (!key) return undefined;
+  try {
+    return pickStorage(kind)?.getItem(key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveToken(key: string | undefined, kind: StorageKind | undefined, token: string): void {
   if (!key) return;
   try {
-    globalThis.localStorage?.setItem(key, token);
+    pickStorage(kind)?.setItem(key, token);
   } catch {
     // Storage unavailable (private mode, quota): resume just won't work.
   }
 }
 
-function clearToken(key: string | undefined): void {
+function clearToken(key: string | undefined, kind: StorageKind | undefined): void {
   if (!key) return;
   try {
-    globalThis.localStorage?.removeItem(key);
+    pickStorage(kind)?.removeItem(key);
   } catch {
     // ignore
   }
@@ -565,6 +583,7 @@ export class P2PGame {
   private readonly ws: WebSocket;
   private readonly rtcConfig: RTCConfiguration;
   private readonly storageKey: string | undefined;
+  private readonly storageKind: StorageKind | undefined;
   private roster: WirePlayer[];
   private startedFlag: boolean;
   private closedFlag = false;
@@ -623,7 +642,7 @@ export class P2PGame {
             : { type: "join", code: opts.code };
         if (opts.appId) msg.appId = opts.appId;
         if (opts.claimPlayerId == null) {
-          const token = opts.resumeToken ?? loadToken(opts.storageKey);
+          const token = opts.resumeToken ?? loadToken(opts.storageKey, opts.storage);
           if (token) msg.resumeToken = token;
           if (opts.create) msg.create = opts.create;
         }
@@ -667,13 +686,14 @@ export class P2PGame {
     this.startedFlag = joined.started;
     this.roster = joined.players.map((p) => ({ ...p }));
     this.storageKey = opts.storageKey;
+    this.storageKind = opts.storage;
     const iceServers = [...(joined.iceServers ?? []), ...(opts.iceServers ?? [])];
     this.iceServers = iceServers;
     this.rtcConfig = {
       iceServers,
       ...(opts.forceRelay ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
     };
-    saveToken(this.storageKey, joined.resumeToken);
+    saveToken(this.storageKey, this.storageKind, joined.resumeToken);
 
     ws.onmessage = (ev) => {
       if (typeof ev.data !== "string") return;
@@ -823,7 +843,7 @@ export class P2PGame {
       /* ignore */
     }
     this.teardownPeers();
-    clearToken(this.storageKey);
+    clearToken(this.storageKey, this.storageKind);
     this.listeners.clear();
     this.pendingEvents = [];
   }
@@ -909,7 +929,9 @@ export class P2PGame {
             // "session-superseded" means our own token resumed from
             // another tab, which just stored its new token under the
             // same storageKey — don't clobber it.
-            if (msg.code !== "session-superseded") clearToken(this.storageKey);
+            if (msg.code !== "session-superseded") {
+              clearToken(this.storageKey, this.storageKind);
+            }
           }
           this.emit({ type: "signaling-closed", code: msg.code, message: msg.message });
         } else {
