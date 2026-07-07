@@ -59,9 +59,10 @@ points and NPCs:
   (→ Foundry), machinery (→ Agri Dome). Buy with T while docked; docking at a
   base that wants your cargo sells it automatically. Getting shot down
   jettisons the hold, so the pirates guarding the trade lanes matter.
-- **Pirates loiter, wander and juke**: each pirate patrols a base, wanders to
-  a new one every ~25 s (no lane stays permanently safe), chases anyone within
-  ~3000 px, and fires only within ~a screen. When a laser is about to cross
+- **Pirates loiter, wander and juke**: eight pirates each patrol a base and
+  wander every ~25 s — usually toward a base near some pilot, so the action
+  finds you (red edge markers flag any pirate within sensor range). They chase
+  anyone within ~3000 px and fire only within ~a screen. When a laser is about to cross
   its path it breaks into a hard, jinking evasive turn — while still snapping
   off wild return fire. Killing one pays a credit bounty sized to the hull
   (₡45 for a Talon Retro up to ₡120 for a Kamekh); the host prices the kill in

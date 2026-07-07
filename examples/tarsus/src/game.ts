@@ -509,7 +509,7 @@ class Ship {
       // after ~25s of patrolling, wander off to haunt a different base, so no
       // trade lane stays permanently safe
       if (Math.random() < 0.0007) {
-        this.homeBase = Math.floor(Math.random() * bases.length);
+        this.homeBase = pirateWanderBase();
       }
     }
     this.cruise(0.6);
@@ -667,7 +667,7 @@ let nextPirateSpawnAt = 0;
 let toastUntil = 0;
 let myScore = 0; // kills + pirate bounties; broadcast in STATE, kept client-side
 let dockedBase: P.Base | null = null;
-const NPC_TARGET_COUNT = 3;
+const NPC_TARGET_COUNT = 8; // == protocol MAX_NPCS, the NPC-message cap
 // Index-aligned with P.PIRATE_SPRITES: speed scales the cruise velocity,
 // heavier hulls carry more shields, and tougher marks pay a bigger bounty.
 const PIRATE_STATS = [
@@ -1754,6 +1754,13 @@ function drawMarkers(): void {
   for (const r of remotes.values()) {
     if (r.alive) drawEdgeMarker(r.px, r.py, "#7fe9ff", r.name);
   }
+  // incoming trouble: pirates within sensor range show up red on the edge
+  for (const n of remoteNpcs.values()) {
+    if (dist(n.px, n.py, player().x, player().y) < 3000) drawEdgeMarker(n.px, n.py, "#ff7a7a", "pirate");
+  }
+  for (let i = 1; i < ships.length; i++) {
+    if (dist(ships[i].x, ships[i].y, player().x, player().y) < 3000) drawEdgeMarker(ships[i].x, ships[i].y, "#ff7a7a", "pirate");
+  }
   let nearest: P.Base | null = null;
   let nearestD = Infinity;
   for (const b of bases) {
@@ -1795,6 +1802,29 @@ function drawRemoteLasers(): void {
 }
 
 //////////// Gameloop ///////////////////////////
+/** Where a bored pirate wanders next: usually a base near some pilot. */
+function pirateWanderBase(): number {
+  const pilots: { x: number; y: number }[] = [];
+  if (player().alive && !player().docked) pilots.push({ x: player().x, y: player().y });
+  for (const r of remotes.values()) {
+    if (r.alive && !r.docked) pilots.push({ x: r.px, y: r.py });
+  }
+  if (pilots.length > 0 && Math.random() < 0.6) {
+    const t = pilots[Math.floor(Math.random() * pilots.length)];
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < bases.length; i++) {
+      const d = dist(bases[i].x, bases[i].y, t.x, t.y);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+  return Math.floor(Math.random() * bases.length);
+}
+
 function pirateTarget(pirate: Ship): { x: number; y: number } | null {
   if (!netActive()) {
     if (ships[0].docked) return null;
