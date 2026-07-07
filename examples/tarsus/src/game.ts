@@ -28,11 +28,12 @@ import * as P from "./protocol.js";
 const canvas = document.createElement("canvas");
 document.body.style.overflow="hidden"; // hide scroll bars
 canvas.id = "drawArea";
-canvas.setAttribute("style", "background-color:#000008;bottom:2px;right:2px;z-index:100;position:fixed");
+canvas.setAttribute("style", "background-color:#000008;bottom:0;right:0;z-index:100;position:fixed");
 const origWidth: number = 640;
 const origHeight: number = 480;
-canvas.width = origWidth; // 640;
-canvas.height = origHeight; // 480;
+// fill the window by default; F10 toggles back to the classic 640x480
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 canvas.tabIndex = 0;
 const ctx = canvas.getContext("2d")!;
 
@@ -571,6 +572,14 @@ function changeCanvasSize() {
   stars = new Stars(starList);
 }
 
+window.addEventListener("resize", () => {
+  if (canvas.width !== origWidth) {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    stars = new Stars(starList);
+  }
+});
+
 canvas.onkeyup = function(e) {
   if (e.key == "a" || e.key == "ArrowLeft") {
     player().leftPressed = false
@@ -596,12 +605,15 @@ canvas.onkeyup = function(e) {
   if (e.key == "b" || e.key == "B") {
     setBotMode(!botMode)
   }
+  if (e.key == "1" || e.key == "2" || e.key == "3") {
+    buyUpgrade(Number(e.key))
+  }
   if (e.key == "F10") {
     if (canvas.width == origWidth) {
       canvas.requestFullscreen().then(changeCanvasSize).catch(changeCanvasSize);
     } else {
       changeCanvasSize();
-      document.exitFullscreen();
+      document.exitFullscreen().catch(() => {});
     }
   }
   if (e.key == "F11") {
@@ -659,12 +671,12 @@ const NPC_TARGET_COUNT = 3;
 // Index-aligned with P.PIRATE_SPRITES: speed scales the cruise velocity,
 // heavier hulls carry more shields, and tougher marks pay a bigger bounty.
 const PIRATE_STATS = [
-  { speed: 1.0,  shields: 200, bounty: 40 }, // Talon - Pirate
-  { speed: 1.1,  shields: 160, bounty: 35 }, // Talon - Retro
-  { speed: 1.35, shields: 120, bounty: 45 }, // Demon: fast and fragile
-  { speed: 0.9,  shields: 260, bounty: 55 }, // Gothri
-  { speed: 1.15, shields: 150, bounty: 35 }, // Dralthi
-  { speed: 0.6,  shields: 420, bounty: 90 }, // Kamekh: slow gunboat
+  { speed: 1.0,  shields: 200, bounty: 55 },  // Talon - Pirate
+  { speed: 1.1,  shields: 160, bounty: 45 },  // Talon - Retro
+  { speed: 1.35, shields: 120, bounty: 60 },  // Demon: fast and fragile
+  { speed: 0.9,  shields: 260, bounty: 75 },  // Gothri
+  { speed: 1.15, shields: 150, bounty: 50 },  // Dralthi
+  { speed: 0.6,  shields: 420, bounty: 120 }, // Kamekh: slow gunboat
 ];
 function pirateBounty(sprite: number): number {
   return PIRATE_STATS[sprite % PIRATE_STATS.length].bounty;
@@ -801,7 +813,7 @@ function buyCargo(): void {
     showToast(`hold carries ${P.COMMODITIES[cargoType].name} — deliver that first`);
     return;
   }
-  if (cargoUnits >= P.CARGO_CAPACITY) {
+  if (cargoUnits >= cargoCapacity()) {
     showToast("cargo hold is full");
     return;
   }
@@ -812,7 +824,7 @@ function buyCargo(): void {
   credits -= c.buyPrice;
   cargoType = ci;
   cargoUnits++;
-  showToast(`bought ${c.name} ${cargoUnits}/${P.CARGO_CAPACITY} — ₡${credits} left`, 1200);
+  showToast(`bought ${c.name} ${cargoUnits}/${cargoCapacity()} — ₡${credits} left`, 1200);
 }
 
 /** Sell the hold if this base wants it; returns the toast line for docking. */
@@ -827,6 +839,63 @@ function sellCargoAt(b: P.Base): string {
     return line;
   }
   return `docked at ${b.name} — repairing`;
+}
+
+//////////// upgrades (bought at Foundries) ///////////////////
+// The credit sink: while docked at a Foundry, keys 1/2/3 buy permanent (per
+// session) ship upgrades. Client-side, like credits and cargo.
+const FOUNDRY = 3; // BASE_SPRITES index of Industrial.png
+const HOLD_PRICES = [300, 700, 1500]; // +10 cargo capacity per level
+const SHIELD_PRICES = [400, 900, 2000]; // +100 max shields per level
+const ENGINE_PRICES = [350, 800, 1800]; // +10% speed and thrust per level
+let holdLevel = 0;
+let shieldLevel = 0;
+let engineLevel = 0;
+
+function cargoCapacity(): number {
+  return P.CARGO_CAPACITY + 10 * holdLevel;
+}
+
+function buyUpgrade(track: number): void {
+  const p = player();
+  if (!p.docked || !dockedBase || dockedBase.sprite !== FOUNDRY) return;
+  const level = track === 1 ? holdLevel : track === 2 ? shieldLevel : engineLevel;
+  const prices = track === 1 ? HOLD_PRICES : track === 2 ? SHIELD_PRICES : ENGINE_PRICES;
+  if (level >= prices.length) {
+    showToast("that system is fully upgraded");
+    return;
+  }
+  const price = prices[level];
+  if (credits < price) {
+    showToast(`not enough credits — ₡${price} needed`);
+    return;
+  }
+  credits -= price;
+  if (track === 1) {
+    holdLevel++;
+    showToast(`cargo hold expanded to ${cargoCapacity()} units`);
+  } else if (track === 2) {
+    shieldLevel++;
+    p.shieldsMax += 100;
+    showToast(`shield capacitor upgraded — max ${p.shieldsMax}`);
+  } else {
+    engineLevel++;
+    p.maxSetSpeed *= 1.1;
+    p.maxAfterburnerVelocity *= 1.1;
+    p.acceleration *= 1.1;
+    p.afterburnerAcceleration *= 1.1;
+    showToast("engines tuned — +10% speed and thrust");
+  }
+}
+
+function upgradePromptLine(): string {
+  const p = player();
+  const parts = [
+    holdLevel < HOLD_PRICES.length ? `[1] hold ${cargoCapacity()}→${cargoCapacity() + 10} ₡${HOLD_PRICES[holdLevel]}` : "[1] hold maxed",
+    shieldLevel < SHIELD_PRICES.length ? `[2] shields ${p.shieldsMax}→${p.shieldsMax + 100} ₡${SHIELD_PRICES[shieldLevel]}` : "[2] shields maxed",
+    engineLevel < ENGINE_PRICES.length ? `[3] engines +10% ₡${ENGINE_PRICES[engineLevel]}` : "[3] engines maxed",
+  ];
+  return parts.join("  ·  ");
 }
 
 /** The nearest base within docking distance of the player, if any. */
@@ -1371,7 +1440,7 @@ function updateHud(): void {
   const me = player();
   let status = `score ${myScore} · ₡${credits} · shields ${Math.max(0, Math.round(me.shields))} · energy ${Math.round(me.energy)}`;
   if (cargoUnits > 0) {
-    status += ` · ${P.COMMODITIES[cargoType].name} ${cargoUnits}/${P.CARGO_CAPACITY}`;
+    status += ` · ${P.COMMODITIES[cargoType].name} ${cargoUnits}/${cargoCapacity()}`;
   }
   if (!net) {
     hud.textContent = status;
@@ -1486,9 +1555,10 @@ function botStep(): void {
     if (p.shields < p.shieldsMax) return; // finish repairs first
     if (dockedBase) {
       const ci = localCommodity(dockedBase.sprite);
+      if (botBuyUpgrade()) return;
       if (
         ci >= 0 &&
-        cargoUnits < P.CARGO_CAPACITY &&
+        cargoUnits < cargoCapacity() &&
         (cargoUnits === 0 || cargoType === ci) &&
         credits >= P.COMMODITIES[ci].buyPrice
       ) {
@@ -1556,6 +1626,21 @@ function botStep(): void {
   }
 }
 
+/** Docked at a Foundry with money to spare: invest in the cheapest upgrade. */
+function botBuyUpgrade(): boolean {
+  if (!dockedBase || dockedBase.sprite !== FOUNDRY) return false;
+  const options: { track: number; price: number }[] = [];
+  if (holdLevel < HOLD_PRICES.length) options.push({ track: 1, price: HOLD_PRICES[holdLevel] });
+  if (shieldLevel < SHIELD_PRICES.length) options.push({ track: 2, price: SHIELD_PRICES[shieldLevel] });
+  if (engineLevel < ENGINE_PRICES.length) options.push({ track: 3, price: ENGINE_PRICES[engineLevel] });
+  options.sort((a, b) => a.price - b.price);
+  if (options.length > 0 && credits >= options[0].price + 150) {
+    buyUpgrade(options[0].track); // keep a float for the next cargo load
+    return true;
+  }
+  return false;
+}
+
 function setBotMode(on: boolean): void {
   botMode = on;
   if (!on) {
@@ -1567,9 +1652,6 @@ function setBotMode(on: boolean): void {
 }
 
 //////////// remote rendering ///////////////////
-const remoteLaserSprite = new Image();
-remoteLaserSprite.src = P.SPRITE_BASE + "BallWhite.png";
-
 function drawRemoteShip(ship: Ship, x: number, y: number, angle: number): void {
   ship.x = x;
   ship.y = y;
@@ -1639,9 +1721,9 @@ function drawEdgeMarker(wx: number, wy: number, color: string, label: string): v
   ctx.restore();
 }
 
-function drawCenterText(text: string): void {
+function drawCenterText(text: string, y = 64): void {
   ctx.save();
-  ctx.translate(canvas.width / 2, 64); // flipped coords: 64 px up from the bottom
+  ctx.translate(canvas.width / 2, y); // flipped coords: y px up from the bottom
   ctx.scale(1, -1);
   ctx.font = "bold 14px system-ui, sans-serif";
   ctx.fillStyle = "#7fe9ff";
@@ -1658,9 +1740,10 @@ function drawDockPrompt(): void {
     const ci = localCommodity(dockedBase.sprite);
     if (ci >= 0) {
       const c = P.COMMODITIES[ci];
-      text += ` · T to buy ${c.name} (₡${c.buyPrice} → ${P.BASE_TYPE_NAMES[c.sellAt]}s pay ₡${c.sellPrice})`;
+      text += ` · T to buy ${c.name} (₡${c.buyPrice} → ${P.BASE_TYPE_NAMES[c.sellAt]} pays ₡${c.sellPrice})`;
     }
     drawCenterText(text);
+    if (dockedBase.sprite === FOUNDRY) drawCenterText(upgradePromptLine(), 40);
     return;
   }
   const b = dockableBase();
@@ -1693,11 +1776,13 @@ function drawWireLaser(img: HTMLImageElement, wx: number, wy: number): void {
 
 function drawRemoteLasers(): void {
   const now = performance.now();
+  // same red ball everyone sees for their own shots — a laser must look the
+  // same on every screen, whoever fired it
   for (const [slot, r] of remotes) {
     const age = Math.min((now - r.lastRecv) / 1000, 0.4);
     for (const l of r.lasers) {
       if (consumedLasers.has(laserKey(slot, l.id))) continue;
-      drawWireLaser(remoteLaserSprite, l.x + l.vx * 60 * age, l.y + l.vy * 60 * age);
+      drawWireLaser(laser.sprite[0], l.x + l.vx * 60 * age, l.y + l.vy * 60 * age);
     }
   }
   if (npcLasersFrom >= 0 && npcLasersFrom !== selfSlot) {
@@ -1886,7 +1971,8 @@ function frame() {
 (window as any).tarsus = {
   ships, remotes, remoteNpcs, bases, laser, player, netActive, isHost,
   score: () => myScore,
-  trade: () => ({ credits, cargoType, cargoUnits }),
+  trade: () => ({ credits, cargoType, cargoUnits, capacity: cargoCapacity(), holdLevel, shieldLevel, engineLevel }),
+  grant: (c: number) => { credits += c; }, // debug/testing
   bot: (on: boolean) => setBotMode(on),
   botActive: () => botMode,
 };

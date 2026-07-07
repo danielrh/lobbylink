@@ -22,7 +22,8 @@ the URL, so sharing the link is sharing the room.
 - **L** — dock / launch when near a base (repair + rearm; docked ships are safe)
 - **T** — buy one unit of the local commodity while docked (hold to keep buying)
 - **B** — autopilot: the ship trades, hunts pirates, retreats and docks on its own
-- **F10 / F11** — fullscreen toggles
+- **1 / 2 / 3** — buy upgrades while docked at a Foundry (hold / shields / engines)
+- **F10 / F11** — fullscreen toggles (the game fills the window by default)
 
 ## How the multiplayer works
 
@@ -63,8 +64,12 @@ points and NPCs:
   ~3000 px, and fires only within ~a screen. When a laser is about to cross
   its path it breaks into a hard, jinking evasive turn — while still snapping
   off wild return fire. Killing one pays a credit bounty sized to the hull
-  (₡35 for a Talon Retro up to ₡90 for a Kamekh); the host prices the kill in
+  (₡45 for a Talon Retro up to ₡120 for a Kamekh); the host prices the kill in
   the reliable `NPC_KILL` receipt.
+- **Upgrades — the credit sink**: dock at a Foundry and keys 1/2/3 buy three
+  levels each of cargo hold (+10 units), shield capacitor (+100 max), and
+  engine tuning (+10% speed and thrust), at escalating prices (₡300 → ₡2000).
+  Upgrades last the session and survive death; cargo does not.
 - **Autopilot** (press B, or open `?bot=NAME#ROOM` to spawn a bot that
   auto-joins): a player AI that runs trade routes, hunts bounties when its
   hold is empty or its wallet is, fights defensively while carrying cargo,
