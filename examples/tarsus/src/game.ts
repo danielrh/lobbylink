@@ -47,6 +47,8 @@ const K_SCALE:number = .0025;
 // the 640x480 screen corner) and lose interest entirely at long range.
 const NPC_SHOOT_RANGE = 500;
 const NPC_DISENGAGE_RANGE = 3000;
+// Press L within this distance of a base to dock (repair + invulnerable).
+const DOCK_RANGE = 170;
 const boom_urls:string[] = ["https://graphics.stanford.edu/~danielh/sprites/boom/01.png","https://graphics.stanford.edu/~danielh/sprites/boom/02.png","https://graphics.stanford.edu/~danielh/sprites/boom/03.png","https://graphics.stanford.edu/~danielh/sprites/boom/04.png","https://graphics.stanford.edu/~danielh/sprites/boom/05.png","https://graphics.stanford.edu/~danielh/sprites/boom/06.png","https://graphics.stanford.edu/~danielh/sprites/boom/07.png","https://graphics.stanford.edu/~danielh/sprites/boom/08.png","https://graphics.stanford.edu/~danielh/sprites/boom/09.png","https://graphics.stanford.edu/~danielh/sprites/boom/10.png","https://graphics.stanford.edu/~danielh/sprites/boom/11.png","https://graphics.stanford.edu/~danielh/sprites/boom/12.png","https://graphics.stanford.edu/~danielh/sprites/boom/13.png","https://graphics.stanford.edu/~danielh/sprites/boom/14.png",]
 function square(x:number) {
   return x*x;
@@ -327,8 +329,12 @@ class Ship {
   downPressed:  boolean = false;
   leftPressed:  boolean = false;
   rightPressed: boolean = false;
-  alive: boolean = true; // only ever false for the local player in multiplayer
-  npcId: number = 0;     // wire id when this ship is a host-simulated pirate
+  alive: boolean = true;  // only ever false for the local player in multiplayer
+  docked: boolean = false; // parked at a base: invulnerable, repairing (local player only)
+  npcId: number = 0;      // wire id when this ship is a host-simulated pirate
+  npcSprite: number = 0;  // index into P.PIRATE_SPRITES when this is a pirate
+  speedFactor: number = 1; // pirate cruise-speed multiplier (varies by hull)
+  lastHitBy: Ship|null = null; // owner of the last laser that hit us (bounty credit)
   x: number  = 320;
   y: number = 240;
   shieldTime:number=0;
@@ -431,6 +437,7 @@ class Ship {
       if (dist(laser.laserX[i],laser.laserY[i],this.x,this.y)>=laser.damageArea2 && dist(laser.laserX[i],laser.laserY[i],this.x,this.y)<laser.damageArea1 && laser.laserEntityStartId[i]!== this) {
         this.shields -= 10
         this.shieldTime=20
+        this.lastHitBy = laser.laserEntityStartId[i]
         if( 0 >= this.shields) {
           isAlive = false
           
@@ -467,8 +474,8 @@ class Ship {
         shoot(this)
       }
     }
-    this.xVelocity = this.maxSetSpeed * Math.cos(toRadians(this.angle)) *.1;
-    this.yVelocity = this.maxSetSpeed * Math.sin(toRadians(this.angle)) *.1;
+    this.xVelocity = this.maxSetSpeed * Math.cos(toRadians(this.angle)) *.1 * this.speedFactor;
+    this.yVelocity = this.maxSetSpeed * Math.sin(toRadians(this.angle)) *.1 * this.speedFactor;
   }
 }
 let camera = new Camera();
@@ -544,6 +551,9 @@ canvas.onkeyup = function(e) {
   if (e.key == " ") {
     player().spacePressed = false
   }
+  if (e.key == "l" || e.key == "L") {
+    toggleDock()
+  }
   if (e.key == "F10") {
     if (canvas.width == origWidth) {
       canvas.requestFullscreen().then(changeCanvasSize).catch(changeCanvasSize);
@@ -601,8 +611,22 @@ let deadUntil = 0;
 let nextNpcId = 1;
 let nextPirateSpawnAt = 0;
 let toastUntil = 0;
+let myScore = 0; // kills + pirate bounties; broadcast in STATE, kept client-side
+let dockedBase: P.Base | null = null;
 const NPC_TARGET_COUNT = 2;
-const PIRATE_URL = P.SPRITE_BASE + "Talon_-_Pirate.png";
+// Index-aligned with P.PIRATE_SPRITES: speed scales the cruise velocity and
+// heavier hulls carry more shields.
+const PIRATE_STATS = [
+  { speed: 1.0,  shields: 200 }, // Talon - Pirate
+  { speed: 1.1,  shields: 160 }, // Talon - Retro
+  { speed: 1.35, shields: 120 }, // Demon: fast and fragile
+  { speed: 0.9,  shields: 260 }, // Gothri
+  { speed: 1.15, shields: 150 }, // Dralthi
+  { speed: 0.6,  shields: 420 }, // Kamekh: slow gunboat
+];
+function pirateSprite(idx: number): string {
+  return P.SPRITE_BASE + P.PIRATE_SPRITES[idx % P.PIRATE_SPRITES.length];
+}
 
 interface RemoteEntity {
   ship: Ship; // pose/sprite holder so Ship.draw renders it
@@ -616,10 +640,14 @@ interface RemotePlayer extends RemoteEntity {
   name: string;
   shipIdx: number;
   alive: boolean;
+  docked: boolean;
+  score: number;
   lasers: P.WireLaser[];
   seq: number;
 }
-type RemoteNpc = RemoteEntity;
+interface RemoteNpc extends RemoteEntity {
+  sprite: number;
+}
 
 const remotes = new Map<number, RemotePlayer>();
 const remoteNpcs = new Map<number, RemoteNpc>();
@@ -697,9 +725,47 @@ function dieMp(shooterSlot: number, laserId: number, npcLaser: boolean, boomAlre
   showToast("your ship was destroyed — respawning…");
 }
 
+/** The nearest base within docking distance of the player, if any. */
+function dockableBase(): P.Base | null {
+  const p = player();
+  let best: P.Base | null = null;
+  let bestD = Infinity;
+  for (const b of bases) {
+    const d = dist(b.x, b.y, p.x, p.y);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return bestD <= DOCK_RANGE ? best : null;
+}
+
+function toggleDock(): void {
+  const p = player();
+  if (!p.alive) return;
+  if (p.docked) {
+    p.docked = false;
+    dockedBase = null;
+    showToast("launched — good hunting");
+    return;
+  }
+  const b = dockableBase();
+  if (b) {
+    p.docked = true;
+    dockedBase = b;
+    p.xVelocity = 0;
+    p.yVelocity = 0;
+    p.angleSpeed = 0;
+    p.shieldTime = 0;
+    showToast(`docked at ${b.name} — repairing`);
+  }
+}
+
 function respawnMp(): void {
   const p = player();
   p.alive = true;
+  p.docked = false;
+  dockedBase = null;
   p.shields = p.shieldsMax;
   p.energy = p.maxEnergy;
   p.shieldTime = 0;
@@ -734,8 +800,8 @@ function netStep(): void {
   for (const r of remotes.values()) if (r.ship.shieldTime > 0) r.ship.shieldTime--;
   for (const n of remoteNpcs.values()) if (n.ship.shieldTime > 0) n.ship.shieldTime--;
 
-  // remote players' lasers vs my ship
-  if (p.alive) {
+  // remote players' lasers vs my ship (docked ships are safe in the hangar)
+  if (p.alive && !p.docked) {
     outer: for (const [slot, r] of remotes) {
       const age = Math.min((now - r.lastRecv) / 1000, 0.4);
       for (const l of r.lasers) {
@@ -751,7 +817,7 @@ function netStep(): void {
   }
   // the host's pirate lasers vs my ship (the host's own copy lives in its
   // local pool and is handled by Ship.update there)
-  if (p.alive && npcLasersFrom >= 0 && npcLasersFrom !== selfSlot) {
+  if (p.alive && !p.docked && npcLasersFrom >= 0 && npcLasersFrom !== selfSlot) {
     const age = Math.min((now - lastNpcRecv) / 1000, 0.4);
     for (const l of npcLasers) {
       if (consumedLasers.has(laserKey(npcLasersFrom, l.id))) continue;
@@ -764,18 +830,17 @@ function netStep(): void {
     }
   }
 
-  // my lasers vs remote ships: retire on visual contact (the victim reports
-  // the damage); vs the host's NPCs: retire and report the hit reliably.
+  // My lasers vs the host's NPCs: retire and report the hit reliably — the
+  // report IS the damage path, so it fires on contact, however fresh the shot.
+  // My lasers vs remote ships: purely cosmetic retirement, and only once the
+  // laser has flown long enough (> one send interval) to have been broadcast;
+  // eating it at birth would mean the victim — the damage authority — never
+  // receives it, making point-blank shots do nothing.
   for (let i = laser.laserX.length - 1; i >= 0; i--) {
     if (laser.laserEntityStartId[i] !== p) continue;
     const lx = laser.laserX[i], ly = laser.laserY[i];
     let hit = false;
-    for (const r of remotes.values()) {
-      if (!r.alive) continue;
-      const d = dist(lx, ly, r.px, r.py);
-      if (d >= laser.damageArea2 && d < laser.damageArea1) { hit = true; break; }
-    }
-    if (!hit && !isHost()) {
+    if (!isHost()) {
       for (const [id, n] of remoteNpcs) {
         const d = dist(lx, ly, n.px, n.py);
         if (d >= laser.damageArea2 && d < laser.damageArea1) {
@@ -785,6 +850,13 @@ function netStep(): void {
           if (h >= 0 && h !== selfSlot) net.sendReliable(h, P.encodeNpcDamage(id, P.LASER_DAMAGE)).catch(() => {});
           break;
         }
+      }
+    }
+    if (!hit && dist(laser.laserStartX[i], laser.laserStartY[i], lx, ly) > 100) {
+      for (const r of remotes.values()) {
+        if (!r.alive || r.docked) continue;
+        const d = dist(lx, ly, r.px, r.py);
+        if (d >= laser.damageArea2 && d < laser.damageArea1) { hit = true; break; }
       }
     }
     if (hit) popList2Position(laser.allProperties, i);
@@ -813,16 +885,26 @@ function spawnPirate(): void {
   const anchor = anchors.length > 0 ? anchors[Math.floor(Math.random() * anchors.length)] : { x: player().x, y: player().y };
   const ang = Math.random() * Math.PI * 2;
   const d = 500 + Math.random() * 400;
-  const pirate = new Ship(PIRATE_URL, anchor.x + Math.cos(ang) * d, anchor.y + Math.sin(ang) * d);
+  const idx = Math.floor(Math.random() * P.PIRATE_SPRITES.length);
+  const stats = PIRATE_STATS[idx % PIRATE_STATS.length];
+  const pirate = new Ship(pirateSprite(idx), anchor.x + Math.cos(ang) * d, anchor.y + Math.sin(ang) * d);
   pirate.npcId = nextNpcId++ & 0xff;
+  pirate.npcSprite = idx;
+  pirate.speedFactor = stats.speed;
+  pirate.shieldsMax = stats.shields;
+  pirate.shields = stats.shields;
   ships.push(pirate);
 }
 
 /** I am now the lowest-id player: adopt the NPCs I last saw (or spawn fresh). */
 function becomeHost(now: number): void {
   for (const [id, n] of remoteNpcs) {
-    const pirate = new Ship(PIRATE_URL, n.px, n.py);
+    const stats = PIRATE_STATS[n.sprite % PIRATE_STATS.length];
+    const pirate = new Ship(pirateSprite(n.sprite), n.px, n.py);
     pirate.npcId = id;
+    pirate.npcSprite = n.sprite;
+    pirate.speedFactor = stats.speed;
+    pirate.shieldsMax = stats.shields;
     pirate.angle = n.pa;
     pirate.xVelocity = n.vx;
     pirate.yVelocity = n.vy;
@@ -852,10 +934,12 @@ function sendState(): void {
     seq: sendSeq++ & 0xffff,
     alive: pl.alive,
     flash: pl.shieldTime > 0,
+    docked: pl.docked,
     x: pl.x, y: pl.y,
     angle: pl.angle, angleSpeed: pl.angleSpeed,
     vx: pl.xVelocity, vy: pl.yVelocity,
     shields: pl.shields,
+    score: myScore,
     ship: myShipIdx,
     lasers: myWireLasers(),
     name: myName,
@@ -867,7 +951,7 @@ function sendNpc(): void {
   const shipsOut: P.NpcShip[] = [];
   for (let i = 1; i < ships.length; i++) {
     const s = ships[i];
-    shipsOut.push({ id: s.npcId, flash: s.shieldTime > 0, x: s.x, y: s.y, angle: s.angle, vx: s.xVelocity, vy: s.yVelocity, shields: s.shields });
+    shipsOut.push({ id: s.npcId, flash: s.shieldTime > 0, sprite: s.npcSprite, x: s.x, y: s.y, angle: s.angle, vx: s.xVelocity, vy: s.yVelocity, shields: s.shields });
   }
   net.broadcastBestEffort(P.encodeNpc({ seq: npcSeq++ & 0xffff, ships: shipsOut, lasers: npcWireLasers() }));
 }
@@ -906,7 +990,6 @@ function netFrame(dt: number): void {
     sendState();
     if (hosting) sendNpc();
   }
-  updateHud();
 }
 
 function onState(from: number, s: P.StateMsg): void {
@@ -914,7 +997,7 @@ function onState(from: number, s: P.StateMsg): void {
   if (!r) {
     r = {
       ship: new Ship(P.SPRITE_BASE + P.SHIP_SPRITES[s.ship % P.SHIP_SPRITES.length], s.x, s.y),
-      name: s.name, shipIdx: s.ship, alive: s.alive,
+      name: s.name, shipIdx: s.ship, alive: s.alive, docked: s.docked, score: s.score,
       x: s.x, y: s.y, angle: s.angle, angleSpeed: s.angleSpeed, vx: s.vx, vy: s.vy,
       px: s.x, py: s.y, pa: s.angle,
       shields: s.shields, lasers: s.lasers, lastRecv: performance.now(), seq: s.seq,
@@ -925,7 +1008,8 @@ function onState(from: number, s: P.StateMsg): void {
   if (!P.seqNewer(s.seq, r.seq)) return;
   r.x = s.x; r.y = s.y; r.angle = s.angle; r.angleSpeed = s.angleSpeed;
   r.vx = s.vx; r.vy = s.vy;
-  r.alive = s.alive; r.shields = s.shields; r.name = s.name; r.lasers = s.lasers;
+  r.alive = s.alive; r.docked = s.docked; r.score = s.score;
+  r.shields = s.shields; r.name = s.name; r.lasers = s.lasers;
   r.lastRecv = performance.now(); r.seq = s.seq;
   if (s.flash && r.ship.shieldTime <= 0) r.ship.shieldTime = 20;
   if (s.ship !== r.shipIdx) {
@@ -954,7 +1038,13 @@ function onDamage(from: number, d: P.DamageMsg): void {
     r.ship.shieldTime = 20;
     if (d.died) r.alive = false;
   }
-  if (d.died) boom.createBoom(d.x, d.y);
+  if (d.died) {
+    boom.createBoom(d.x, d.y);
+    if (d.shooterSlot === selfSlot && !d.npcLaser) {
+      myScore++;
+      showToast(`you shot down ${r?.name ?? "a pilot"} — +1`);
+    }
+  }
 }
 
 function onNpcState(from: number, m: P.NpcMsg): void {
@@ -969,7 +1059,7 @@ function onNpcState(from: number, m: P.NpcMsg): void {
     let n = remoteNpcs.get(s.id);
     if (!n) {
       n = {
-        ship: new Ship(PIRATE_URL, s.x, s.y),
+        ship: new Ship(pirateSprite(s.sprite), s.x, s.y), sprite: s.sprite,
         x: s.x, y: s.y, angle: s.angle, angleSpeed: 0, vx: s.vx, vy: s.vy,
         px: s.x, py: s.y, pa: s.angle,
         shields: s.shields, lastRecv: now,
@@ -978,6 +1068,12 @@ function onNpcState(from: number, m: P.NpcMsg): void {
     } else {
       n.x = s.x; n.y = s.y; n.angle = s.angle; n.vx = s.vx; n.vy = s.vy;
       n.shields = s.shields; n.lastRecv = now;
+      if (n.sprite !== s.sprite) {
+        n.sprite = s.sprite;
+        const img = new Image();
+        img.src = pirateSprite(s.sprite);
+        n.ship.sprite = img;
+      }
     }
     if (s.flash && n.ship.shieldTime <= 0) n.ship.shieldTime = 20;
   }
@@ -992,8 +1088,8 @@ function onNpcState(from: number, m: P.NpcMsg): void {
   lastNpcRecv = now;
 }
 
-function onNpcDamage(m: P.NpcDamageMsg): void {
-  if (!isHost()) return;
+function onNpcDamage(from: number, m: P.NpcDamageMsg): void {
+  if (!isHost() || !net) return;
   for (let i = 1; i < ships.length; i++) {
     if (ships[i].npcId === m.npcId) {
       ships[i].shields -= m.damage;
@@ -1001,10 +1097,17 @@ function onNpcDamage(m: P.NpcDamageMsg): void {
       if (ships[i].shields <= 0) {
         boom.createBoom(ships[i].x, ships[i].y);
         ships.splice(i, 1);
+        // the reporter landed the killing blow: pay the bounty
+        net.sendReliable(from, P.encodeNpcKill(m.npcId)).catch(() => {});
       }
       return;
     }
   }
+}
+
+function onNpcKill(): void {
+  myScore++;
+  showToast("pirate bounty +1");
 }
 
 function onNet(ev: P2PEvent): void {
@@ -1015,7 +1118,8 @@ function onNet(ev: P2PEvent): void {
       if (msg.kind === "state") onState(ev.from, msg);
       else if (msg.kind === "damage") onDamage(ev.from, msg);
       else if (msg.kind === "npc") onNpcState(ev.from, msg);
-      else if (msg.kind === "npc-damage") onNpcDamage(msg);
+      else if (msg.kind === "npc-damage") onNpcDamage(ev.from, msg);
+      else if (msg.kind === "npc-kill") onNpcKill();
       break;
     }
     case "player-left":
@@ -1074,6 +1178,7 @@ async function connectMp(): Promise<void> {
   wasHost = false;
   deadUntil = 0;
   sendAcc = 0;
+  myScore = 0;
   remotes.clear();
   remoteNpcs.clear();
   consumedLasers.clear();
@@ -1115,18 +1220,19 @@ function showToast(text: string, ms = 2200): void {
 }
 
 function updateHud(): void {
+  const me = player();
+  const status = `score ${myScore} · shields ${Math.max(0, Math.round(me.shields))} · energy ${Math.round(me.energy)}`;
   if (!net) {
-    hud.textContent = "";
+    hud.textContent = status;
     return;
   }
   let pilots = 1;
   for (const p of net.players) {
     if (p.occupied && p.connected && p.id !== selfSlot) pilots++;
   }
-  const me = player();
   hud.textContent =
     `room ${net.code} · ${pilots} pilot${pilots === 1 ? "" : "s"}${wasHost ? " · ★host" : ""}\n` +
-    `${myName} — shields ${Math.max(0, Math.round(me.shields))} · energy ${Math.round(me.energy)}`;
+    `${myName} — ${status}`;
 }
 
 function initUi(): void {
@@ -1220,6 +1326,28 @@ function drawEdgeMarker(wx: number, wy: number, color: string, label: string): v
   ctx.restore();
 }
 
+function drawCenterText(text: string): void {
+  ctx.save();
+  ctx.translate(canvas.width / 2, 64); // flipped coords: 64 px up from the bottom
+  ctx.scale(1, -1);
+  ctx.font = "bold 14px system-ui, sans-serif";
+  ctx.fillStyle = "#7fe9ff";
+  ctx.textAlign = "center";
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+function drawDockPrompt(): void {
+  const p = player();
+  if (!p.alive) return;
+  if (p.docked) {
+    drawCenterText(`docked at ${dockedBase?.name ?? "base"} — press L to launch`);
+    return;
+  }
+  const b = dockableBase();
+  if (b) drawCenterText(`press L to dock at ${b.name}`);
+}
+
 function drawMarkers(): void {
   for (const r of remotes.values()) {
     if (r.alive) drawEdgeMarker(r.px, r.py, "#7fe9ff", r.name);
@@ -1265,16 +1393,17 @@ function drawRemoteLasers(): void {
 //////////// Gameloop ///////////////////////////
 function pirateTarget(pirate: Ship): { x: number; y: number } | null {
   if (!netActive()) {
+    if (ships[0].docked) return null;
     return { x: ships[0].x, y: ships[0].y };
   }
   let best: { x: number; y: number } | null = null;
   let bestD = Infinity;
-  if (player().alive) {
+  if (player().alive && !player().docked) {
     best = { x: player().x, y: player().y };
     bestD = dist(player().x, player().y, pirate.x, pirate.y);
   }
   for (const r of remotes.values()) {
-    if (!r.alive) continue;
+    if (!r.alive || r.docked) continue;
     const d = dist(r.px, r.py, pirate.x, pirate.y);
     if (d < bestD) {
       bestD = d;
@@ -1285,7 +1414,7 @@ function pirateTarget(pirate: Ship): { x: number; y: number } | null {
 }
 
 function step() {
-  if (player().alive) {
+  if (player().alive && !player().docked) {
     if (player().angleSpeed >= 5){
       player().angleSpeed = 5
     }
@@ -1330,7 +1459,7 @@ function step() {
       if (t) ships[i].ai(t.x, t.y);
     }
     let isAlive = true;
-    if (ships[i].alive) {
+    if (ships[i].alive && !ships[i].docked) {
       isAlive = ships[i].update()
     }
     if(!isAlive){
@@ -1338,16 +1467,25 @@ function step() {
         // a pirate laser from the local pool got me (host only)
         dieMp(selfSlot, P.NO_ID, true, true);
       } else {
+        if (ships[i] !== player() && ships[i].lastHitBy === player()) {
+          myScore++;
+          showToast("pirate bounty +1");
+        }
         ships.splice(i, 1)
       }
     }
+  }
+  if (player().docked) {
+    // repairing and rearming in the hangar
+    player().shields = Math.min(player().shieldsMax, player().shields + 2);
+    player().energy = Math.min(player().maxEnergy, player().energy + 10);
   }
   if (netActive() && player() === shipBefore && shipBefore.alive && shipBefore.shields <= shieldsBefore - P.LASER_DAMAGE + 1) {
     // a pirate laser from the local pool chipped my shields; tell the room
     broadcastDamage({ died: false, npcLaser: true, shooterSlot: selfSlot, laserId: P.NO_ID, shieldsAfter: shipBefore.shields, x: shipBefore.x, y: shipBefore.y });
   }
 
-  if(player().alive && player().spacePressed) {
+  if(player().alive && !player().docked && player().spacePressed) {
     shoot(player());
   }
   if (player().alive && !player().upPressed && !player().downPressed) {
@@ -1376,13 +1514,14 @@ function render() {
   for (const r of remotes.values()) {
     if (!r.alive) continue;
     drawRemoteShip(r.ship, r.px, r.py, r.pa);
-    drawLabel(r.px, r.py, r.name);
+    drawLabel(r.px, r.py, r.docked ? `${r.name} · ${r.score} ⚓` : `${r.name} · ${r.score}`);
   }
   for(let i = 0; i<ships.length;i++) {
     if (ships[i].alive) ships[i].draw(camera)
   }
   boom.draw(camera);
   drawMarkers();
+  drawDockPrompt();
   ctx.restore();
 }
 
@@ -1404,13 +1543,14 @@ function frame() {
   }
   if (steps === 4) stepAcc = 0;
   netFrame(dt);
+  updateHud();
   if (now > toastUntil) toastEl.style.display = "none";
   render();
   requestAnimationFrame(frame);
 }
 
 // live handles for debugging and automated tests
-(window as any).tarsus = { ships, remotes, remoteNpcs, bases, player, netActive, isHost };
+(window as any).tarsus = { ships, remotes, remoteNpcs, bases, laser, player, netActive, isHost, score: () => myScore };
 
 initUi();
 requestAnimationFrame(frame);

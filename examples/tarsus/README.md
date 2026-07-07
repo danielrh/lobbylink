@@ -19,6 +19,7 @@ the URL, so sharing the link is sharing the room.
 - **WASD / arrows** — turn and thrust (S/↓ reverses)
 - **Tab** — afterburner
 - **Space** — fire
+- **L** — dock / launch when near a base (repair + rearm; docked ships are safe)
 - **F10 / F11** — fullscreen toggles
 
 ## How the multiplayer works
@@ -37,11 +38,19 @@ points and NPCs:
   retires that laser by id. Ids also guarantee a laser is only ever counted
   once.
 - The **lowest-id connected player hosts the pirates**, simulating them locally
-  and broadcasting them in `NPC` messages. Clients report their laser hits on
-  pirates to the host over the reliable channel (`NPC_DAMAGE`). If the host
-  leaves, the next-lowest player adopts the last NPC snapshot it saw; fresh
-  joiners wait a 3 s grace period before assuming hostship so an existing
-  host's world isn't duplicated.
+  and broadcasting them in `NPC` messages (each carries its hull sprite —
+  Talons, Demons, Gothri, Dralthi and the slow, heavily-shielded Kamekh).
+  Clients report their laser hits on pirates to the host over the reliable
+  channel (`NPC_DAMAGE`); when a report lands the killing blow the host pays
+  the bounty back with `NPC_KILL`. If the host leaves, the next-lowest player
+  adopts the last NPC snapshot it saw; fresh joiners wait a 3 s grace period
+  before assuming hostship so an existing host's world isn't duplicated.
+- **Scores are kept client-side** (kills + pirate bounties, broadcast in
+  `STATE` so labels show `name · score`) and shown in the HUD.
+- **Docking**: press L near a base to dock — the ship repairs and rearms, is
+  invulnerable, and stops being a pirate target; its `STATE` carries a docked
+  flag so other clients let their lasers pass through. Press L again to
+  launch.
 - **Bases are a pure function of a fixed seed** (`WORLD_SEED` in
   `src/protocol.ts`), so every client places the same twelve landmarks at the
   same coordinates with zero messages. Edge-of-screen arrows point to fellow

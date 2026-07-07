@@ -35,6 +35,7 @@ export const MSG_STATE = 0x01;
 export const MSG_DAMAGE = 0x02;
 export const MSG_NPC = 0x03;
 export const MSG_NPC_DAMAGE = 0x04;
+export const MSG_NPC_KILL = 0x05;
 
 const NAME_MAX = 24;
 
@@ -50,6 +51,16 @@ export const SHIP_SPRITES = [
   "Dralthi.png",
   "Tarsus.png",
   "Talon_-_Militia.png",
+];
+
+/** NPC pirate roster; NPC messages carry an index into this list. */
+export const PIRATE_SPRITES = [
+  "Talon_-_Pirate.png",
+  "Talon_-_Retro.png",
+  "Demon.png",
+  "Gothri.png",
+  "Dralthi.png",
+  "Kamekh.png",
 ];
 
 // ---- messages ---------------------------------------------------------------
@@ -68,6 +79,7 @@ export interface StateMsg {
   seq: number;
   alive: boolean;
   flash: boolean; // shields recently hit (render flicker)
+  docked: boolean; // parked at a base: invulnerable and not a target
   x: number;
   y: number;
   angle: number; // degrees, math orientation
@@ -75,6 +87,7 @@ export interface StateMsg {
   vx: number;
   vy: number;
   shields: number;
+  score: number; // kills + pirate bounties, kept client-side
   ship: number; // index into SHIP_SPRITES
   lasers: WireLaser[];
   name: string;
@@ -96,6 +109,8 @@ export interface DamageMsg {
 export interface NpcShip {
   id: number;
   flash: boolean;
+  /** index into PIRATE_SPRITES */
+  sprite: number;
   x: number;
   y: number;
   angle: number;
@@ -119,7 +134,13 @@ export interface NpcDamageMsg {
   damage: number;
 }
 
-export type Decoded = StateMsg | DamageMsg | NpcMsg | NpcDamageMsg | null;
+/** Reliable, host → the client whose report destroyed NPC `npcId` (bounty). */
+export interface NpcKillMsg {
+  kind: "npc-kill";
+  npcId: number;
+}
+
+export type Decoded = StateMsg | DamageMsg | NpcMsg | NpcDamageMsg | NpcKillMsg | null;
 
 // ---- encode -----------------------------------------------------------------
 
@@ -159,11 +180,12 @@ function getLasers(dv: DataView, o: number, out: WireLaser[]): number {
 export function encodeState(s: Omit<StateMsg, "kind">): Uint8Array {
   const nameBytes = new TextEncoder().encode(s.name).slice(0, NAME_MAX);
   const n = Math.min(s.lasers.length, MAX_WIRE_LASERS);
-  const buf = new ArrayBuffer(34 + n * 18 + 1 + nameBytes.length);
+  const buf = new ArrayBuffer(38 + n * 18 + 1 + nameBytes.length);
   const dv = new DataView(buf);
   let flags = 0;
   if (s.alive) flags |= 1;
   if (s.flash) flags |= 2;
+  if (s.docked) flags |= 4;
   dv.setUint8(0, MSG_STATE);
   dv.setUint8(1, flags);
   dv.setUint16(2, s.seq & 0xffff, false);
@@ -174,8 +196,9 @@ export function encodeState(s: Omit<StateMsg, "kind">): Uint8Array {
   dv.setFloat32(20, s.vx, false);
   dv.setFloat32(24, s.vy, false);
   dv.setFloat32(28, s.shields, false);
-  dv.setUint8(32, s.ship & 0xff);
-  let o = putLasers(dv, 33, s.lasers);
+  dv.setUint32(32, s.score >>> 0, false);
+  dv.setUint8(36, s.ship & 0xff);
+  let o = putLasers(dv, 37, s.lasers);
   dv.setUint8(o, nameBytes.length);
   o += 1;
   new Uint8Array(buf, o).set(nameBytes);
@@ -201,7 +224,7 @@ export function encodeDamage(d: Omit<DamageMsg, "kind">): Uint8Array {
 export function encodeNpc(m: Omit<NpcMsg, "kind">): Uint8Array {
   const ships = m.ships.slice(0, MAX_NPCS);
   const n = Math.min(m.lasers.length, MAX_WIRE_LASERS);
-  const buf = new ArrayBuffer(4 + ships.length * 26 + 1 + n * 18);
+  const buf = new ArrayBuffer(4 + ships.length * 27 + 1 + n * 18);
   const dv = new DataView(buf);
   dv.setUint8(0, MSG_NPC);
   dv.setUint16(1, m.seq & 0xffff, false);
@@ -210,13 +233,14 @@ export function encodeNpc(m: Omit<NpcMsg, "kind">): Uint8Array {
   for (const s of ships) {
     dv.setUint8(o, s.id & 0xff);
     dv.setUint8(o + 1, s.flash ? 1 : 0);
-    dv.setFloat32(o + 2, s.x, false);
-    dv.setFloat32(o + 6, s.y, false);
-    dv.setFloat32(o + 10, s.angle, false);
-    dv.setFloat32(o + 14, s.vx, false);
-    dv.setFloat32(o + 18, s.vy, false);
-    dv.setFloat32(o + 22, s.shields, false);
-    o += 26;
+    dv.setUint8(o + 2, s.sprite & 0xff);
+    dv.setFloat32(o + 3, s.x, false);
+    dv.setFloat32(o + 7, s.y, false);
+    dv.setFloat32(o + 11, s.angle, false);
+    dv.setFloat32(o + 15, s.vx, false);
+    dv.setFloat32(o + 19, s.vy, false);
+    dv.setFloat32(o + 23, s.shields, false);
+    o += 27;
   }
   putLasers(dv, o, m.lasers);
   return new Uint8Array(buf);
@@ -231,6 +255,14 @@ export function encodeNpcDamage(npcId: number, damage: number): Uint8Array {
   return new Uint8Array(buf);
 }
 
+export function encodeNpcKill(npcId: number): Uint8Array {
+  const buf = new ArrayBuffer(2);
+  const dv = new DataView(buf);
+  dv.setUint8(0, MSG_NPC_KILL);
+  dv.setUint8(1, npcId & 0xff);
+  return new Uint8Array(buf);
+}
+
 // ---- decode -----------------------------------------------------------------
 
 export function decode(data: Uint8Array): Decoded {
@@ -238,12 +270,12 @@ export function decode(data: Uint8Array): Decoded {
   const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
   switch (dv.getUint8(0)) {
     case MSG_STATE: {
-      if (data.length < 34) return null;
+      if (data.length < 38) return null;
       const flags = dv.getUint8(1);
       const lasers: WireLaser[] = [];
-      const nLasers = dv.getUint8(33);
-      if (data.length < 34 + nLasers * 18 + 1) return null;
-      let o = getLasers(dv, 33, lasers);
+      const nLasers = dv.getUint8(37);
+      if (data.length < 38 + nLasers * 18 + 1) return null;
+      let o = getLasers(dv, 37, lasers);
       const nameLen = dv.getUint8(o);
       o += 1;
       if (data.length < o + nameLen) return null;
@@ -253,6 +285,7 @@ export function decode(data: Uint8Array): Decoded {
         seq: dv.getUint16(2, false),
         alive: (flags & 1) !== 0,
         flash: (flags & 2) !== 0,
+        docked: (flags & 4) !== 0,
         x: dv.getFloat32(4, false),
         y: dv.getFloat32(8, false),
         angle: dv.getFloat32(12, false),
@@ -260,7 +293,8 @@ export function decode(data: Uint8Array): Decoded {
         vx: dv.getFloat32(20, false),
         vy: dv.getFloat32(24, false),
         shields: dv.getFloat32(28, false),
-        ship: dv.getUint8(32),
+        score: dv.getUint32(32, false),
+        ship: dv.getUint8(36),
         lasers,
         name,
       };
@@ -282,21 +316,22 @@ export function decode(data: Uint8Array): Decoded {
     case MSG_NPC: {
       if (data.length < 4) return null;
       const count = dv.getUint8(3);
-      if (data.length < 4 + count * 26 + 1) return null;
+      if (data.length < 4 + count * 27 + 1) return null;
       const ships: NpcShip[] = [];
       let o = 4;
       for (let i = 0; i < count; i++) {
         ships.push({
           id: dv.getUint8(o),
           flash: dv.getUint8(o + 1) !== 0,
-          x: dv.getFloat32(o + 2, false),
-          y: dv.getFloat32(o + 6, false),
-          angle: dv.getFloat32(o + 10, false),
-          vx: dv.getFloat32(o + 14, false),
-          vy: dv.getFloat32(o + 18, false),
-          shields: dv.getFloat32(o + 22, false),
+          sprite: dv.getUint8(o + 2),
+          x: dv.getFloat32(o + 3, false),
+          y: dv.getFloat32(o + 7, false),
+          angle: dv.getFloat32(o + 11, false),
+          vx: dv.getFloat32(o + 15, false),
+          vy: dv.getFloat32(o + 19, false),
+          shields: dv.getFloat32(o + 23, false),
         });
-        o += 26;
+        o += 27;
       }
       const nLasers = dv.getUint8(o);
       if (data.length < o + 1 + nLasers * 18) return null;
@@ -307,6 +342,9 @@ export function decode(data: Uint8Array): Decoded {
     case MSG_NPC_DAMAGE:
       if (data.length < 3) return null;
       return { kind: "npc-damage", npcId: dv.getUint8(1), damage: dv.getUint8(2) };
+    case MSG_NPC_KILL:
+      if (data.length < 2) return null;
+      return { kind: "npc-kill", npcId: dv.getUint8(1) };
     default:
       return null;
   }
