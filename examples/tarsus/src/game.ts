@@ -51,6 +51,9 @@ const NPC_DISENGAGE_RANGE = 3000;
 const DOCK_RANGE = 170;
 // Off-duty pirates patrol a circle of this radius around their home base.
 const NPC_LOITER_RADIUS = 600;
+// Pirate cruise speed as a fraction of a player's max: fast enough to pressure
+// a trader near a base, slow enough that a straight-line run always escapes.
+const NPC_CRUISE = 0.35;
 const boom_urls:string[] = ["https://graphics.stanford.edu/~danielh/sprites/boom/01.png","https://graphics.stanford.edu/~danielh/sprites/boom/02.png","https://graphics.stanford.edu/~danielh/sprites/boom/03.png","https://graphics.stanford.edu/~danielh/sprites/boom/04.png","https://graphics.stanford.edu/~danielh/sprites/boom/05.png","https://graphics.stanford.edu/~danielh/sprites/boom/06.png","https://graphics.stanford.edu/~danielh/sprites/boom/07.png","https://graphics.stanford.edu/~danielh/sprites/boom/08.png","https://graphics.stanford.edu/~danielh/sprites/boom/09.png","https://graphics.stanford.edu/~danielh/sprites/boom/10.png","https://graphics.stanford.edu/~danielh/sprites/boom/11.png","https://graphics.stanford.edu/~danielh/sprites/boom/12.png","https://graphics.stanford.edu/~danielh/sprites/boom/13.png","https://graphics.stanford.edu/~danielh/sprites/boom/14.png",]
 function square(x:number) {
   return x*x;
@@ -473,8 +476,8 @@ class Ship {
     }
   }
   private cruise(throttle:number) {
-    this.xVelocity = this.maxSetSpeed * Math.cos(toRadians(this.angle)) *.1 * this.speedFactor * throttle;
-    this.yVelocity = this.maxSetSpeed * Math.sin(toRadians(this.angle)) *.1 * this.speedFactor * throttle;
+    this.xVelocity = this.maxSetSpeed * Math.cos(toRadians(this.angle)) * NPC_CRUISE * this.speedFactor * throttle;
+    this.yVelocity = this.maxSetSpeed * Math.sin(toRadians(this.angle)) * NPC_CRUISE * this.speedFactor * throttle;
   }
   /** Combat: chase the target, firing only near its screen. */
   public ai(targetX:number, targetY:number) {
@@ -484,6 +487,17 @@ class Ship {
     }
     this.cruise(1);
   }
+  /** Incoming fire: break hard off the shot's path, jinking as we go. */
+  public evade(dirX:number, dirY:number, side:number) {
+    const evadeAngle = Math.atan2(dirY, dirX) * 180 / Math.PI + 90 * side;
+    this.steerToward(
+      this.x + Math.cos(toRadians(evadeAngle)) * 100,
+      this.y + Math.sin(toRadians(evadeAngle)) * 100,
+      3,
+    );
+    this.angle += (Math.random() - 0.5) * 2; // jink
+    this.cruise(1);
+  }
   /** Off duty: head back to the home base and patrol a lazy circle there. */
   public loiter() {
     const b = bases[this.homeBase % bases.length];
@@ -491,8 +505,13 @@ class Ship {
       this.steerToward(b.x, b.y, 1);
     } else {
       this.angle += 0.5;
+      // after ~25s of patrolling, wander off to haunt a different base, so no
+      // trade lane stays permanently safe
+      if (Math.random() < 0.0007) {
+        this.homeBase = Math.floor(Math.random() * bases.length);
+      }
     }
-    this.cruise(0.7);
+    this.cruise(0.6);
   }
 }
 let camera = new Camera();
@@ -574,6 +593,9 @@ canvas.onkeyup = function(e) {
   if (e.key == "l" || e.key == "L") {
     toggleDock()
   }
+  if (e.key == "b" || e.key == "B") {
+    setBotMode(!botMode)
+  }
   if (e.key == "F10") {
     if (canvas.width == origWidth) {
       canvas.requestFullscreen().then(changeCanvasSize).catch(changeCanvasSize);
@@ -634,16 +656,19 @@ let toastUntil = 0;
 let myScore = 0; // kills + pirate bounties; broadcast in STATE, kept client-side
 let dockedBase: P.Base | null = null;
 const NPC_TARGET_COUNT = 3;
-// Index-aligned with P.PIRATE_SPRITES: speed scales the cruise velocity and
-// heavier hulls carry more shields.
+// Index-aligned with P.PIRATE_SPRITES: speed scales the cruise velocity,
+// heavier hulls carry more shields, and tougher marks pay a bigger bounty.
 const PIRATE_STATS = [
-  { speed: 1.0,  shields: 200 }, // Talon - Pirate
-  { speed: 1.1,  shields: 160 }, // Talon - Retro
-  { speed: 1.35, shields: 120 }, // Demon: fast and fragile
-  { speed: 0.9,  shields: 260 }, // Gothri
-  { speed: 1.15, shields: 150 }, // Dralthi
-  { speed: 0.6,  shields: 420 }, // Kamekh: slow gunboat
+  { speed: 1.0,  shields: 200, bounty: 40 }, // Talon - Pirate
+  { speed: 1.1,  shields: 160, bounty: 35 }, // Talon - Retro
+  { speed: 1.35, shields: 120, bounty: 45 }, // Demon: fast and fragile
+  { speed: 0.9,  shields: 260, bounty: 55 }, // Gothri
+  { speed: 1.15, shields: 150, bounty: 35 }, // Dralthi
+  { speed: 0.6,  shields: 420, bounty: 90 }, // Kamekh: slow gunboat
 ];
+function pirateBounty(sprite: number): number {
+  return PIRATE_STATS[sprite % PIRATE_STATS.length].bounty;
+}
 function pirateSprite(idx: number): string {
   return P.SPRITE_BASE + P.PIRATE_SPRITES[idx % P.PIRATE_SPRITES.length];
 }
@@ -864,6 +889,11 @@ function applyRemoteHit(shooterSlot: number, laserId: number, npcLaser: boolean)
   const p = player();
   p.shields -= P.LASER_DAMAGE;
   p.shieldTime = 20;
+  if (!npcLaser) {
+    // remember who to shoot back at (the autopilot holds a 20 s grudge)
+    lastAggressor = shooterSlot;
+    aggressorUntil = performance.now() + 20000;
+  }
   if (p.shields <= 0) {
     dieMp(shooterSlot, laserId, npcLaser, false);
   } else {
@@ -944,6 +974,42 @@ function netStep(): void {
 
 function shortestDeg(d: number): number {
   return ((d % 360) + 540) % 360 - 180;
+}
+
+/**
+ * Will this laser cross within dodging distance of (sx, sy)? Returns the
+ * shot's direction and which side the ship sits on, so it can break away.
+ */
+function laserThreat(sx: number, sy: number, lx: number, ly: number, lvx: number, lvy: number): { dirX: number; dirY: number; side: number } | null {
+  const rx = sx - lx;
+  const ry = sy - ly;
+  if (rx * rx + ry * ry > 500 * 500) return null;
+  const sp = Math.hypot(lvx, lvy);
+  if (sp < 0.001) return null;
+  if (rx * lvx + ry * lvy < 0) return null; // flying away from the ship
+  const miss = (lvx * ry - lvy * rx) / sp; // signed miss distance off the path
+  if (Math.abs(miss) > 80) return null;
+  return { dirX: lvx / sp, dirY: lvy / sp, side: miss >= 0 ? 1 : -1 };
+}
+
+/** First incoming laser threatening this ship (local pool + remote shots). */
+function laserThreatTo(ship: Ship): { dirX: number; dirY: number; side: number } | null {
+  for (let i = 0; i < laser.laserX.length; i++) {
+    if (laser.laserEntityStartId[i] === ship) continue;
+    const t = laserThreat(ship.x, ship.y, laser.laserX[i], laser.laserY[i], laser.laserVelocityX[i], laser.laserVelocityY[i]);
+    if (t) return t;
+  }
+  if (!netActive()) return null;
+  const now = performance.now();
+  for (const [slot, r] of remotes) {
+    const age = Math.min((now - r.lastRecv) / 1000, 0.4);
+    for (const l of r.lasers) {
+      if (consumedLasers.has(laserKey(slot, l.id))) continue;
+      const t = laserThreat(ship.x, ship.y, l.x + l.vx * 60 * age, l.y + l.vy * 60 * age, l.vx, l.vy);
+      if (t) return t;
+    }
+  }
+  return null;
 }
 /** Dead-reckon to the latest snapshot and ease the rendered pose toward it. */
 function easeRemote(r: RemoteEntity, dt: number, now: number): void {
@@ -1175,19 +1241,21 @@ function onNpcDamage(from: number, m: P.NpcDamageMsg): void {
       ships[i].shields -= m.damage;
       ships[i].shieldTime = 20;
       if (ships[i].shields <= 0) {
+        const sprite = ships[i].npcSprite;
         boom.createBoom(ships[i].x, ships[i].y);
         ships.splice(i, 1);
         // the reporter landed the killing blow: pay the bounty
-        net.sendReliable(from, P.encodeNpcKill(m.npcId)).catch(() => {});
+        net.sendReliable(from, P.encodeNpcKill(m.npcId, sprite)).catch(() => {});
       }
       return;
     }
   }
 }
 
-function onNpcKill(): void {
+function onNpcKill(m: P.NpcKillMsg): void {
   myScore++;
-  showToast("pirate bounty +1");
+  credits += pirateBounty(m.sprite);
+  showToast(`pirate bounty +1 · ₡${pirateBounty(m.sprite)}`);
 }
 
 function onNet(ev: P2PEvent): void {
@@ -1199,7 +1267,7 @@ function onNet(ev: P2PEvent): void {
       else if (msg.kind === "damage") onDamage(ev.from, msg);
       else if (msg.kind === "npc") onNpcState(ev.from, msg);
       else if (msg.kind === "npc-damage") onNpcDamage(ev.from, msg);
-      else if (msg.kind === "npc-kill") onNpcKill();
+      else if (msg.kind === "npc-kill") onNpcKill(msg);
       break;
     }
     case "player-left":
@@ -1321,6 +1389,16 @@ function updateHud(): void {
 function initUi(): void {
   const hashCode = decodeURIComponent(location.hash.replace(/^#/, ""));
   if (hashCode) ($("code") as HTMLInputElement).value = hashCode;
+  // ?bot=NAME#ROOM spawns an autopiloted pilot that joins the room on load
+  // (give the tab its own window: hidden tabs stop animating, and the bot
+  // flies by the animation loop like any other player).
+  const botParam = new URLSearchParams(location.search).get("bot");
+  if (botParam !== null) {
+    const name = botParam && botParam !== "1" ? botParam : "drone-" + Math.floor(Math.random() * 900 + 100);
+    ($("name") as HTMLInputElement).value = name;
+    botMode = true;
+    void connectMp();
+  }
   mpBtn.addEventListener("click", () => {
     if (net) {
       leaveMp();
@@ -1334,6 +1412,158 @@ function initUi(): void {
     mpMenu.style.display = "none";
     canvas.focus();
   });
+}
+
+//////////// autopilot (bot pilot) ///////////////////
+// A player AI that plays the game like a person would: runs trade routes,
+// hunts pirates near its path (or anywhere when broke), retreats to a dock
+// when the shields get low, and retaliates against players who shoot it.
+// Toggle with B, or open the page with ?bot=NAME#ROOM to spawn a bot that
+// auto-joins the room. It only drives the local ship's inputs, so on the wire
+// a bot is indistinguishable from a person.
+let botMode = false;
+let lastAggressor = -1; // slot of the last player who shot us
+let aggressorUntil = 0;
+let botNoDockUntil = 0; // hysteresis so a broke bot doesn't dock-thrash
+
+const BOT_HUNT_RANGE = 1400;
+const BOT_RETREAT_SHIELDS = 60;
+
+function nearestBaseOfType(type: number): P.Base | null {
+  let best: P.Base | null = null;
+  let bestD = Infinity;
+  for (const b of bases) {
+    if (type >= 0 && b.sprite !== type) continue;
+    const d = dist(b.x, b.y, player().x, player().y);
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/** Steer with the normal turn keys; returns the remaining bearing error (deg). */
+function botSteer(tx: number, ty: number): number {
+  const p = player();
+  const targetAngle = Math.atan2(ty - p.y, tx - p.x) * 180 / Math.PI;
+  const diff = shortestDeg(targetAngle - p.angle);
+  if (diff > 4) p.leftPressed = true;
+  else if (diff < -4) p.rightPressed = true;
+  return diff;
+}
+
+function botFlyTo(tx: number, ty: number): void {
+  const p = player();
+  const d = dist(tx, ty, p.x, p.y);
+  const diff = botSteer(tx, ty);
+  // keep thrusting until well inside DOCK_RANGE — a taller cutoff leaves a
+  // dead zone where the bot coasts to a stop just out of docking reach
+  if (Math.abs(diff) < 40 && d > 120) {
+    p.upPressed = true;
+    if (d > 900 && Math.abs(diff) < 15) p.tabPressed = true;
+  }
+}
+
+function botAttack(tx: number, ty: number, d: number): void {
+  const p = player();
+  const diff = botSteer(tx, ty);
+  if (Math.abs(diff) < 35 && d > 160) p.upPressed = true;
+  if (d > 1000 && Math.abs(diff) < 15) p.tabPressed = true;
+  const aimTolerance = Math.atan2(45, Math.max(d, 60)) * 180 / Math.PI;
+  if (Math.abs(diff) < aimTolerance && d < 480) p.spacePressed = true;
+}
+
+function botStep(): void {
+  if (!botMode) return;
+  const p = player();
+  p.leftPressed = p.rightPressed = p.upPressed = p.downPressed = false;
+  p.spacePressed = p.tabPressed = false;
+  if (!p.alive) return;
+  const now = performance.now();
+
+  if (p.docked) {
+    if (p.shields < p.shieldsMax) return; // finish repairs first
+    if (dockedBase) {
+      const ci = localCommodity(dockedBase.sprite);
+      if (
+        ci >= 0 &&
+        cargoUnits < P.CARGO_CAPACITY &&
+        (cargoUnits === 0 || cargoType === ci) &&
+        credits >= P.COMMODITIES[ci].buyPrice
+      ) {
+        buyCargo();
+        return;
+      }
+    }
+    toggleDock(); // launch
+    botNoDockUntil = now + 4000;
+    return;
+  }
+
+  // survival first: limp to the nearest base and dock
+  if (p.shields < BOT_RETREAT_SHIELDS) {
+    const safe = nearestBaseOfType(-1);
+    if (safe) {
+      botFlyTo(safe.x, safe.y);
+      if (dist(safe.x, safe.y, p.x, p.y) <= DOCK_RANGE) toggleDock();
+      return;
+    }
+  }
+
+  // pick a fight: whoever shot us recently, else a pirate near the flight
+  // path — or any pirate at all when we're broke and need bounty money
+  let tx = 0, ty = 0, targetD = Infinity;
+  if (lastAggressor >= 0 && now < aggressorUntil) {
+    const r = remotes.get(lastAggressor);
+    if (r && r.alive && !r.docked) {
+      const d = dist(r.px, r.py, p.x, p.y);
+      if (d < 2000) {
+        tx = r.px; ty = r.py; targetD = d;
+      }
+    }
+  }
+  if (targetD === Infinity) {
+    // empty hold: hunt for bounties (anywhere, if broke). Carrying cargo:
+    // only fight what's directly in the way — deliveries come first.
+    const huntRange =
+      cargoUnits > 0 ? 700 :
+      credits < 10 ? Infinity :
+      BOT_HUNT_RANGE;
+    for (const n of remoteNpcs.values()) {
+      const d = dist(n.px, n.py, p.x, p.y);
+      if (d < huntRange && d < targetD) {
+        tx = n.px; ty = n.py; targetD = d;
+      }
+    }
+    for (let i = 1; i < ships.length; i++) {
+      const d = dist(ships[i].x, ships[i].y, p.x, p.y);
+      if (d < huntRange && d < targetD) {
+        tx = ships[i].x; ty = ships[i].y; targetD = d;
+      }
+    }
+  }
+  if (targetD < Infinity) {
+    botAttack(tx, ty, targetD);
+    return;
+  }
+
+  // otherwise: trade. Deliver the hold, or go shopping at the nearest base.
+  const dest = cargoUnits > 0 ? nearestBaseOfType(P.COMMODITIES[cargoType].sellAt) : nearestBaseOfType(-1);
+  if (dest) {
+    botFlyTo(dest.x, dest.y);
+    if (dist(dest.x, dest.y, p.x, p.y) <= DOCK_RANGE && now > botNoDockUntil) toggleDock();
+  }
+}
+
+function setBotMode(on: boolean): void {
+  botMode = on;
+  if (!on) {
+    const p = player();
+    p.leftPressed = p.rightPressed = p.upPressed = p.downPressed = false;
+    p.spacePressed = p.tabPressed = false;
+  }
+  showToast(botMode ? "autopilot engaged — press B to take the stick back" : "autopilot off — you have the ship");
 }
 
 //////////// remote rendering ///////////////////
@@ -1503,6 +1733,7 @@ function pirateTarget(pirate: Ship): { x: number; y: number } | null {
 }
 
 function step() {
+  botStep();
   if (player().alive && !player().docked) {
     if (player().angleSpeed >= 5){
       player().angleSpeed = 5
@@ -1545,7 +1776,15 @@ function step() {
     if (ships[i] !== player())
     {
       const t = pirateTarget(ships[i]);
-      if (t && dist(t.x, t.y, ships[i].x, ships[i].y) < NPC_DISENGAGE_RANGE) {
+      const engaged = t !== null && dist(t.x, t.y, ships[i].x, ships[i].y) < NPC_DISENGAGE_RANGE;
+      const threat = laserThreatTo(ships[i]);
+      if (threat) {
+        ships[i].evade(threat.dirX, threat.dirY, threat.side);
+        // snap off a wild shot mid-juke when the prey is still close
+        if (engaged && t && dist(t.x, t.y, ships[i].x, ships[i].y) < NPC_SHOOT_RANGE) {
+          shoot(ships[i]);
+        }
+      } else if (engaged && t) {
         ships[i].ai(t.x, t.y);
       } else {
         ships[i].loiter();
@@ -1562,7 +1801,8 @@ function step() {
       } else {
         if (ships[i] !== player() && ships[i].lastHitBy === player()) {
           myScore++;
-          showToast("pirate bounty +1");
+          credits += pirateBounty(ships[i].npcSprite);
+          showToast(`pirate bounty +1 · ₡${pirateBounty(ships[i].npcSprite)}`);
         }
         ships.splice(i, 1)
       }
@@ -1647,6 +1887,8 @@ function frame() {
   ships, remotes, remoteNpcs, bases, laser, player, netActive, isHost,
   score: () => myScore,
   trade: () => ({ credits, cargoType, cargoUnits }),
+  bot: (on: boolean) => setBotMode(on),
+  botActive: () => botMode,
 };
 
 initUi();

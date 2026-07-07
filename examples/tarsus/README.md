@@ -21,6 +21,7 @@ the URL, so sharing the link is sharing the room.
 - **Space** — fire
 - **L** — dock / launch when near a base (repair + rearm; docked ships are safe)
 - **T** — buy one unit of the local commodity while docked (hold to keep buying)
+- **B** — autopilot: the ship trades, hunts pirates, retreats and docks on its own
 - **F10 / F11** — fullscreen toggles
 
 ## How the multiplayer works
@@ -57,10 +58,20 @@ points and NPCs:
   (→ Foundry), machinery (→ Agri Dome). Buy with T while docked; docking at a
   base that wants your cargo sells it automatically. Getting shot down
   jettisons the hold, so the pirates guarding the trade lanes matter.
-- **Pirates loiter**: each pirate spawns at, and patrols around, a random
-  base; it chases anyone within ~3000 px, fires only within ~a screen, and
-  flies home to its base when the target escapes — so trade-lane approaches
-  are dangerous but deep space is quiet.
+- **Pirates loiter, wander and juke**: each pirate patrols a base, wanders to
+  a new one every ~25 s (no lane stays permanently safe), chases anyone within
+  ~3000 px, and fires only within ~a screen. When a laser is about to cross
+  its path it breaks into a hard, jinking evasive turn — while still snapping
+  off wild return fire. Killing one pays a credit bounty sized to the hull
+  (₡35 for a Talon Retro up to ₡90 for a Kamekh); the host prices the kill in
+  the reliable `NPC_KILL` receipt.
+- **Autopilot** (press B, or open `?bot=NAME#ROOM` to spawn a bot that
+  auto-joins): a player AI that runs trade routes, hunts bounties when its
+  hold is empty or its wallet is, fights defensively while carrying cargo,
+  retreats to dock when shields drop, and holds a 20 s grudge against anyone
+  who shoots it. It drives the normal input keys, so on the wire a bot is
+  indistinguishable from a person — handy for soloing the lobby or load-testing
+  a room. Give each bot tab its own window; hidden tabs stop animating.
 - **Bases are a pure function of a fixed seed** (`WORLD_SEED` in
   `src/protocol.ts`), so every client places the same twelve landmarks at the
   same coordinates with zero messages. Edge-of-screen arrows point to fellow

@@ -138,6 +138,8 @@ export interface NpcDamageMsg {
 export interface NpcKillMsg {
   kind: "npc-kill";
   npcId: number;
+  /** PIRATE_SPRITES index of the destroyed hull, so the killer can price it. */
+  sprite: number;
 }
 
 export type Decoded = StateMsg | DamageMsg | NpcMsg | NpcDamageMsg | NpcKillMsg | null;
@@ -255,11 +257,12 @@ export function encodeNpcDamage(npcId: number, damage: number): Uint8Array {
   return new Uint8Array(buf);
 }
 
-export function encodeNpcKill(npcId: number): Uint8Array {
-  const buf = new ArrayBuffer(2);
+export function encodeNpcKill(npcId: number, sprite: number): Uint8Array {
+  const buf = new ArrayBuffer(3);
   const dv = new DataView(buf);
   dv.setUint8(0, MSG_NPC_KILL);
   dv.setUint8(1, npcId & 0xff);
+  dv.setUint8(2, sprite & 0xff);
   return new Uint8Array(buf);
 }
 
@@ -343,8 +346,8 @@ export function decode(data: Uint8Array): Decoded {
       if (data.length < 3) return null;
       return { kind: "npc-damage", npcId: dv.getUint8(1), damage: dv.getUint8(2) };
     case MSG_NPC_KILL:
-      if (data.length < 2) return null;
-      return { kind: "npc-kill", npcId: dv.getUint8(1) };
+      if (data.length < 3) return null;
+      return { kind: "npc-kill", npcId: dv.getUint8(1), sprite: dv.getUint8(2) };
     default:
       return null;
   }
@@ -444,7 +447,8 @@ export function generateBases(): Base[] {
       }
       if (clear) break;
     }
-    const sprite = Math.floor(r() * BASE_SPRITES.length) % BASE_SPRITES.length;
+    // the first four bases cover every type, so no trade route can dead-end
+    const sprite = i < BASE_SPRITES.length ? i : Math.floor(r() * BASE_SPRITES.length) % BASE_SPRITES.length;
     bases.push({ x, y, sprite, name: `${BASE_TYPE_NAMES[sprite]} ${i + 1}` });
   }
   return bases;
