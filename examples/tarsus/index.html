@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Project Tarsus — a lobbylink demo</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000008; font-family: system-ui, sans-serif; }
+
+  /* the game creates its own canvas at z-index 100; UI sits above it */
+  #mp {
+    position: fixed; top: max(10px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
+    z-index: 150; padding: 8px 14px; border-radius: 20px; cursor: pointer;
+    background: rgba(14, 19, 38, 0.85); border: 1px solid #2c3a63; color: #7fe9ff;
+    font-size: 14px; font-weight: 700;
+  }
+  #mp:hover { background: rgba(30, 40, 75, 0.9); }
+
+  #hud {
+    position: fixed; top: max(10px, env(safe-area-inset-top)); left: 12px; z-index: 150;
+    white-space: pre-line; color: #cfe3ff; font-size: 14px; font-weight: 600;
+    text-shadow: 0 1px 3px #000; pointer-events: none;
+  }
+  #toast {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 150; display: none;
+    background: rgba(10,14,28,0.9); border: 1px solid #2c3a63; color: #eaf0ff;
+    padding: 8px 14px; border-radius: 20px; font-size: 14px; pointer-events: none; max-width: 90vw; text-align: center;
+  }
+
+  #mpMenu {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 8, 0.82); z-index: 200; padding: 16px;
+  }
+  .card {
+    background: #0e1326; border: 1px solid #263255; border-radius: 14px; padding: 22px 24px;
+    width: min(420px, 94vw); color: #dfe6ff; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .card h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 0.5px; }
+  .card h1 span { color: #7fe9ff; }
+  .card p.sub { margin: 0 0 18px; color: #94a2c9; font-size: 13px; line-height: 1.5; }
+  label { display: block; font-size: 12px; color: #94a2c9; margin: 12px 0 4px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2c3a63;
+    background: #070b18; color: #eaf0ff; font-size: 15px;
+  }
+  .card button {
+    margin-top: 18px; width: 100%; padding: 13px; border: 0; border-radius: 9px; cursor: pointer;
+    font-size: 16px; font-weight: 700; color: #041018; background: #7fe9ff;
+  }
+  .card button.ghost { background: transparent; color: #9fb0da; border: 1px solid #2c3a63; font-weight: 500; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <div id="hud"></div>
+  <div id="toast"></div>
+  <button id="mp" title="Multiplayer">🌐 Multiplayer</button>
+
+  <div id="mpMenu">
+    <div class="card">
+      <h1>Project <span>Tarsus</span></h1>
+      <p class="sub">Fly the same sky as your friends, peer-to-peer over <b>lobbylink</b>.
+        Pick a call sign and a room code, share the link, and everyone in the room
+        sees (and can shoot) everyone else. Leave the fields alone to fly solo.</p>
+      <label for="name">Call sign</label>
+      <input id="name" maxlength="24" placeholder="pilot" />
+      <label for="code">Room code</label>
+      <input id="code" maxlength="64" value="TARSUS" />
+      <label for="server">Server (blank = auto / prod)</label>
+      <input id="server" placeholder="https://pqrstuvw.xyz/lobbylink" />
+      <button id="connect">Connect →</button>
+      <button id="cancel" class="ghost">Cancel</button>
+    </div>
+  </div>
+
+  <script type="module" src="./dist/game.js"></script>
+</body>
+</html>

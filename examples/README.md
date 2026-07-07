@@ -24,6 +24,12 @@ lobbylink client) to wasm. All three share the same wire protocol.
 > field driven by a shared clock and an automatic clock leader). Build it with
 > plain `javac`; no build tool needed.
 
+> **Want an open world with NPCs?** [`tarsus/`](tarsus) is a TypeScript
+> spaceship game with drop-in multiplayer: pilots broadcast their ships and
+> lasers, the *victim* reports damage on the reliable channel, the lowest-id
+> player hosts the NPC pirates (with automatic handoff), and a fixed world
+> seed places the same base landmarks on every client with zero messages.
+
 Any of them in the **same room code** see and shoot each other — a TypeScript
 browser tab, a Rust/wasm browser tab, and a native Rust desktop window all in
 one field. The exact bytes on the wire — plus the deterministic asteroid field
