@@ -20,6 +20,7 @@ the URL, so sharing the link is sharing the room.
 - **Tab** — afterburner
 - **Space** — fire
 - **L** — dock / launch when near a base (repair + rearm; docked ships are safe)
+- **T** — buy one unit of the local commodity while docked (hold to keep buying)
 - **F10 / F11** — fullscreen toggles
 
 ## How the multiplayer works
@@ -51,6 +52,15 @@ points and NPCs:
   invulnerable, and stops being a pirate target; its `STATE` carries a docked
   flag so other clients let their lasers pass through. Press L again to
   launch.
+- **Trading** (client-side, like scores): a circular economy over the four
+  base types — grain (Agri Dome → Asteroid Base), ore (→ Refinery), fuel
+  (→ Foundry), machinery (→ Agri Dome). Buy with T while docked; docking at a
+  base that wants your cargo sells it automatically. Getting shot down
+  jettisons the hold, so the pirates guarding the trade lanes matter.
+- **Pirates loiter**: each pirate spawns at, and patrols around, a random
+  base; it chases anyone within ~3000 px, fires only within ~a screen, and
+  flies home to its base when the target escapes — so trade-lane approaches
+  are dangerous but deep space is quiet.
 - **Bases are a pure function of a fixed seed** (`WORLD_SEED` in
   `src/protocol.ts`), so every client places the same twelve landmarks at the
   same coordinates with zero messages. Edge-of-screen arrows point to fellow

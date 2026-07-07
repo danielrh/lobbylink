@@ -49,6 +49,8 @@ const NPC_SHOOT_RANGE = 500;
 const NPC_DISENGAGE_RANGE = 3000;
 // Press L within this distance of a base to dock (repair + invulnerable).
 const DOCK_RANGE = 170;
+// Off-duty pirates patrol a circle of this radius around their home base.
+const NPC_LOITER_RADIUS = 600;
 const boom_urls:string[] = ["https://graphics.stanford.edu/~danielh/sprites/boom/01.png","https://graphics.stanford.edu/~danielh/sprites/boom/02.png","https://graphics.stanford.edu/~danielh/sprites/boom/03.png","https://graphics.stanford.edu/~danielh/sprites/boom/04.png","https://graphics.stanford.edu/~danielh/sprites/boom/05.png","https://graphics.stanford.edu/~danielh/sprites/boom/06.png","https://graphics.stanford.edu/~danielh/sprites/boom/07.png","https://graphics.stanford.edu/~danielh/sprites/boom/08.png","https://graphics.stanford.edu/~danielh/sprites/boom/09.png","https://graphics.stanford.edu/~danielh/sprites/boom/10.png","https://graphics.stanford.edu/~danielh/sprites/boom/11.png","https://graphics.stanford.edu/~danielh/sprites/boom/12.png","https://graphics.stanford.edu/~danielh/sprites/boom/13.png","https://graphics.stanford.edu/~danielh/sprites/boom/14.png",]
 function square(x:number) {
   return x*x;
@@ -333,6 +335,7 @@ class Ship {
   docked: boolean = false; // parked at a base: invulnerable, repairing (local player only)
   npcId: number = 0;      // wire id when this ship is a host-simulated pirate
   npcSprite: number = 0;  // index into P.PIRATE_SPRITES when this is a pirate
+  homeBase: number = 0;   // bases[] index a pirate loiters around when off duty
   speedFactor: number = 1; // pirate cruise-speed multiplier (varies by hull)
   lastHitBy: Ship|null = null; // owner of the last laser that hit us (bounty credit)
   x: number  = 320;
@@ -451,31 +454,45 @@ class Ship {
     }
     return isAlive
   }
-  public ai(targetX:number, targetY:number) {
-    const targetDist = dist(targetX, targetY, this.x, this.y);
-    if (targetDist < NPC_DISENGAGE_RANGE) {
-      let targetAngle = (Math.atan2(targetY-this.y,targetX-this.x)*180/Math.PI + 360) % 360;
-      //let targetAngle2 = targetAngle+360
-      let myAngle = (this.angle +360) % 360;
-      //let myAngle2 = myAngle + 360
-      let diff = targetAngle - myAngle;
-      if (diff >= 180) {
-          diff -= 360;
-      }
-      if (diff < -180) {
-          diff += 360;
-      }
-      if (diff > 0) {
-        this.angle += 1;
-      } else {
-        this.angle -= 1;
-      }
-      if (targetDist < NPC_SHOOT_RANGE) {
-        shoot(this)
-      }
+  private steerToward(targetX:number, targetY:number, turnRate:number) {
+    let targetAngle = (Math.atan2(targetY-this.y,targetX-this.x)*180/Math.PI + 360) % 360;
+    //let targetAngle2 = targetAngle+360
+    let myAngle = (this.angle +360) % 360;
+    //let myAngle2 = myAngle + 360
+    let diff = targetAngle - myAngle;
+    if (diff >= 180) {
+        diff -= 360;
     }
-    this.xVelocity = this.maxSetSpeed * Math.cos(toRadians(this.angle)) *.1 * this.speedFactor;
-    this.yVelocity = this.maxSetSpeed * Math.sin(toRadians(this.angle)) *.1 * this.speedFactor;
+    if (diff < -180) {
+        diff += 360;
+    }
+    if (diff > 0) {
+      this.angle += turnRate;
+    } else {
+      this.angle -= turnRate;
+    }
+  }
+  private cruise(throttle:number) {
+    this.xVelocity = this.maxSetSpeed * Math.cos(toRadians(this.angle)) *.1 * this.speedFactor * throttle;
+    this.yVelocity = this.maxSetSpeed * Math.sin(toRadians(this.angle)) *.1 * this.speedFactor * throttle;
+  }
+  /** Combat: chase the target, firing only near its screen. */
+  public ai(targetX:number, targetY:number) {
+    this.steerToward(targetX, targetY, 1);
+    if (dist(targetX, targetY, this.x, this.y) < NPC_SHOOT_RANGE) {
+      shoot(this)
+    }
+    this.cruise(1);
+  }
+  /** Off duty: head back to the home base and patrol a lazy circle there. */
+  public loiter() {
+    const b = bases[this.homeBase % bases.length];
+    if (dist(b.x, b.y, this.x, this.y) > NPC_LOITER_RADIUS) {
+      this.steerToward(b.x, b.y, 1);
+    } else {
+      this.angle += 0.5;
+    }
+    this.cruise(0.7);
   }
 }
 let camera = new Camera();
@@ -517,7 +534,10 @@ canvas.onkeydown = function(e) {
   if (e.key == " ") {
     player().spacePressed = true
   }
-  
+  if (e.key == "t" || e.key == "T") {
+    buyCargo() // key auto-repeat makes holding T buy quickly
+  }
+
   e.preventDefault();
 };
 
@@ -613,7 +633,7 @@ let nextPirateSpawnAt = 0;
 let toastUntil = 0;
 let myScore = 0; // kills + pirate bounties; broadcast in STATE, kept client-side
 let dockedBase: P.Base | null = null;
-const NPC_TARGET_COUNT = 2;
+const NPC_TARGET_COUNT = 3;
 // Index-aligned with P.PIRATE_SPRITES: speed scales the cruise velocity and
 // heavier hulls carry more shields.
 const PIRATE_STATS = [
@@ -722,7 +742,66 @@ function dieMp(shooterSlot: number, laserId: number, npcLaser: boolean, boomAlre
   deadUntil = performance.now() + P.RESPAWN_DELAY_MS;
   if (!boomAlready) boom.createBoom(p.x, p.y);
   broadcastDamage({ died: true, npcLaser, shooterSlot, laserId, shieldsAfter: 0, x: p.x, y: p.y });
-  showToast("your ship was destroyed — respawning…");
+  if (cargoUnits > 0) {
+    showToast(`your ship was destroyed — ${cargoUnits} ${P.COMMODITIES[cargoType].name} lost to the void`);
+    cargoUnits = 0;
+    cargoType = -1;
+  } else {
+    showToast("your ship was destroyed — respawning…");
+  }
+}
+
+//////////// trading ///////////////////
+// Buy a commodity at its home base type (T while docked), fly it to the base
+// type that wants it, and docking auto-sells the load. Credits and cargo are
+// client-side, like scores. Death jettisons the hold — pirates matter.
+let credits = P.START_CREDITS;
+let cargoType = -1; // index into P.COMMODITIES, -1 = empty hold
+let cargoUnits = 0;
+
+/** The commodity sold at this base type, or -1. */
+function localCommodity(baseSprite: number): number {
+  for (let i = 0; i < P.COMMODITIES.length; i++) {
+    if (P.COMMODITIES[i].buyAt === baseSprite) return i;
+  }
+  return -1;
+}
+
+function buyCargo(): void {
+  if (!player().docked || !dockedBase) return;
+  const ci = localCommodity(dockedBase.sprite);
+  if (ci < 0) return;
+  const c = P.COMMODITIES[ci];
+  if (cargoUnits > 0 && cargoType !== ci) {
+    showToast(`hold carries ${P.COMMODITIES[cargoType].name} — deliver that first`);
+    return;
+  }
+  if (cargoUnits >= P.CARGO_CAPACITY) {
+    showToast("cargo hold is full");
+    return;
+  }
+  if (credits < c.buyPrice) {
+    showToast("not enough credits");
+    return;
+  }
+  credits -= c.buyPrice;
+  cargoType = ci;
+  cargoUnits++;
+  showToast(`bought ${c.name} ${cargoUnits}/${P.CARGO_CAPACITY} — ₡${credits} left`, 1200);
+}
+
+/** Sell the hold if this base wants it; returns the toast line for docking. */
+function sellCargoAt(b: P.Base): string {
+  if (cargoUnits > 0 && P.COMMODITIES[cargoType].sellAt === b.sprite) {
+    const c = P.COMMODITIES[cargoType];
+    const earned = cargoUnits * c.sellPrice;
+    credits += earned;
+    const line = `docked at ${b.name} — sold ${cargoUnits} ${c.name} for ₡${earned}`;
+    cargoUnits = 0;
+    cargoType = -1;
+    return line;
+  }
+  return `docked at ${b.name} — repairing`;
 }
 
 /** The nearest base within docking distance of the player, if any. */
@@ -757,7 +836,7 @@ function toggleDock(): void {
     p.yVelocity = 0;
     p.angleSpeed = 0;
     p.shieldTime = 0;
-    showToast(`docked at ${b.name} — repairing`);
+    showToast(sellCargoAt(b));
   }
 }
 
@@ -879,17 +958,17 @@ function easeRemote(r: RemoteEntity, dt: number, now: number): void {
 }
 
 function spawnPirate(): void {
-  const anchors: { x: number; y: number }[] = [];
-  if (player().alive) anchors.push({ x: player().x, y: player().y });
-  for (const r of remotes.values()) if (r.alive) anchors.push({ x: r.px, y: r.py });
-  const anchor = anchors.length > 0 ? anchors[Math.floor(Math.random() * anchors.length)] : { x: player().x, y: player().y };
+  // pirates haunt the trade lanes: spawn at (and loiter around) a random base
+  const home = Math.floor(Math.random() * bases.length);
+  const anchor = bases[home];
   const ang = Math.random() * Math.PI * 2;
-  const d = 500 + Math.random() * 400;
+  const d = 300 + Math.random() * 300;
   const idx = Math.floor(Math.random() * P.PIRATE_SPRITES.length);
   const stats = PIRATE_STATS[idx % PIRATE_STATS.length];
   const pirate = new Ship(pirateSprite(idx), anchor.x + Math.cos(ang) * d, anchor.y + Math.sin(ang) * d);
   pirate.npcId = nextNpcId++ & 0xff;
   pirate.npcSprite = idx;
+  pirate.homeBase = home;
   pirate.speedFactor = stats.speed;
   pirate.shieldsMax = stats.shields;
   pirate.shields = stats.shields;
@@ -903,6 +982,7 @@ function becomeHost(now: number): void {
     const pirate = new Ship(pirateSprite(n.sprite), n.px, n.py);
     pirate.npcId = id;
     pirate.npcSprite = n.sprite;
+    pirate.homeBase = Math.floor(Math.random() * bases.length); // not on the wire; any base will do
     pirate.speedFactor = stats.speed;
     pirate.shieldsMax = stats.shields;
     pirate.angle = n.pa;
@@ -1221,7 +1301,10 @@ function showToast(text: string, ms = 2200): void {
 
 function updateHud(): void {
   const me = player();
-  const status = `score ${myScore} · shields ${Math.max(0, Math.round(me.shields))} · energy ${Math.round(me.energy)}`;
+  let status = `score ${myScore} · ₡${credits} · shields ${Math.max(0, Math.round(me.shields))} · energy ${Math.round(me.energy)}`;
+  if (cargoUnits > 0) {
+    status += ` · ${P.COMMODITIES[cargoType].name} ${cargoUnits}/${P.CARGO_CAPACITY}`;
+  }
   if (!net) {
     hud.textContent = status;
     return;
@@ -1340,8 +1423,14 @@ function drawCenterText(text: string): void {
 function drawDockPrompt(): void {
   const p = player();
   if (!p.alive) return;
-  if (p.docked) {
-    drawCenterText(`docked at ${dockedBase?.name ?? "base"} — press L to launch`);
+  if (p.docked && dockedBase) {
+    let text = `docked at ${dockedBase.name} — L to launch`;
+    const ci = localCommodity(dockedBase.sprite);
+    if (ci >= 0) {
+      const c = P.COMMODITIES[ci];
+      text += ` · T to buy ${c.name} (₡${c.buyPrice} → ${P.BASE_TYPE_NAMES[c.sellAt]}s pay ₡${c.sellPrice})`;
+    }
+    drawCenterText(text);
     return;
   }
   const b = dockableBase();
@@ -1456,7 +1545,11 @@ function step() {
     if (ships[i] !== player())
     {
       const t = pirateTarget(ships[i]);
-      if (t) ships[i].ai(t.x, t.y);
+      if (t && dist(t.x, t.y, ships[i].x, ships[i].y) < NPC_DISENGAGE_RANGE) {
+        ships[i].ai(t.x, t.y);
+      } else {
+        ships[i].loiter();
+      }
     }
     let isAlive = true;
     if (ships[i].alive && !ships[i].docked) {
@@ -1550,7 +1643,11 @@ function frame() {
 }
 
 // live handles for debugging and automated tests
-(window as any).tarsus = { ships, remotes, remoteNpcs, bases, laser, player, netActive, isHost, score: () => myScore };
+(window as any).tarsus = {
+  ships, remotes, remoteNpcs, bases, laser, player, netActive, isHost,
+  score: () => myScore,
+  trade: () => ({ credits, cargoType, cargoUnits }),
+};
 
 initUi();
 requestAnimationFrame(frame);

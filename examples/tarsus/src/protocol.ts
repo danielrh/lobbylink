@@ -370,7 +370,31 @@ export const BASE_SPRITES = [
   "Refinery.png",
   "Industrial.png",
 ];
-const BASE_TYPE_NAMES = ["Agri Dome", "Asteroid Base", "Refinery", "Foundry"];
+export const BASE_TYPE_NAMES = ["Agri Dome", "Asteroid Base", "Refinery", "Foundry"];
+
+// ---- trading ---------------------------------------------------------------
+// A circular economy over the four base types: each commodity is bought at one
+// type and delivered to the next. Credits/cargo are client-side (trust-based,
+// like scores); only the credit total travels in STATE for the leaderboard.
+
+export interface Commodity {
+  name: string;
+  /** BASE_SPRITES index where this is bought / sold */
+  buyAt: number;
+  sellAt: number;
+  buyPrice: number;
+  sellPrice: number;
+}
+
+export const COMMODITIES: Commodity[] = [
+  { name: "grain", buyAt: 0, sellAt: 1, buyPrice: 10, sellPrice: 25 },
+  { name: "ore", buyAt: 1, sellAt: 2, buyPrice: 15, sellPrice: 35 },
+  { name: "fuel", buyAt: 2, sellAt: 3, buyPrice: 20, sellPrice: 45 },
+  { name: "machinery", buyAt: 3, sellAt: 0, buyPrice: 25, sellPrice: 55 },
+];
+
+export const CARGO_CAPACITY = 20;
+export const START_CREDITS = 50;
 
 export interface Base {
   x: number;
