@@ -7,12 +7,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -20,8 +16,7 @@ import (
 	"time"
 
 	"github.com/danielrh/lobbylink/internal/config"
-	"github.com/danielrh/lobbylink/internal/lobby"
-	"github.com/danielrh/lobbylink/internal/server"
+	"github.com/danielrh/lobbylink/lobbyserver"
 )
 
 // version is stamped by the build: -ldflags "-X main.version=...".
@@ -133,97 +128,15 @@ func run() error {
 		}
 	})
 
-	if err := cfg.Validate(); err != nil {
+	// The serving loop lives in the public lobbyserver package so embedders
+	// ("plugins" linking the lobby into their own binary) share this exact
+	// production code path.
+	srv, err := lobbyserver.FromInternal(&cfg, version)
+	if err != nil {
 		return err
 	}
 
-	logger := newLogger(cfg.Server.LogLevel)
-	mgr := lobby.NewManager(lobby.Limits{
-		EmptyTTL: cfg.Rooms.EmptyTTL,
-		MaxTTL:   cfg.Rooms.MaxTTL,
-		MaxRooms: cfg.Rooms.MaxRooms,
-	}, time.Now)
-	srv := server.New(&cfg, mgr, logger, version)
-	handler := srv.Handler()
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	go func() {
-		ticker := time.NewTicker(cfg.Rooms.GCInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if n := mgr.GC(); n > 0 {
-					logger.Info("room gc", "destroyed", n, "remaining", mgr.RoomCount())
-				}
-			}
-		}
-	}()
-
-	errCh := make(chan error, 2)
-	var servers []*http.Server
-
-	if cfg.Server.ListenHTTP != "" {
-		hs := &http.Server{
-			Addr:              cfg.Server.ListenHTTP,
-			Handler:           handler,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		servers = append(servers, hs)
-		ln, err := net.Listen("tcp", cfg.Server.ListenHTTP)
-		if err != nil {
-			return err
-		}
-		logger.Info("listening", "mode", "http", "addr", ln.Addr().String())
-		go func() { errCh <- hs.Serve(ln) }()
-	}
-	if cfg.Server.ListenHTTPS != "" {
-		hs := &http.Server{
-			Addr:              cfg.Server.ListenHTTPS,
-			Handler:           handler,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		servers = append(servers, hs)
-		ln, err := net.Listen("tcp", cfg.Server.ListenHTTPS)
-		if err != nil {
-			return err
-		}
-		logger.Info("listening", "mode", "https", "addr", ln.Addr().String())
-		go func() { errCh <- hs.ServeTLS(ln, cfg.Server.Cert, cfg.Server.Key) }()
-	}
-
-	select {
-	case <-ctx.Done():
-		logger.Info("shutting down")
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for _, hs := range servers {
-		_ = hs.Shutdown(shutdownCtx)
-	}
-	return nil
-}
-
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-	switch level {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+	return srv.Run(ctx, nil)
 }

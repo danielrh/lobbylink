@@ -58,6 +58,24 @@ Key server behaviors:
 - TURN credentials are minted per player with coturn's REST-secret
   scheme (`use-auth-secret`).
 
+## Embedding as a library
+
+Other binaries can link the lobby in and mount their own HTTP routes next to
+it ("plugins") through the public `lobbyserver` package — the stock
+`cmd/p2p-lobby-server` runs through the same package, so embedders get the
+exact production serving behavior. The lobby stays game-agnostic; anything
+game-specific lives in the embedding module.
+
+```go
+cfg, _ := lobbyserver.LoadConfig("server.toml") // or DefaultConfig()
+cfg.SetListenHTTP("127.0.0.1:8787")
+srv, _ := lobbyserver.New(cfg, version)
+mux := http.NewServeMux()
+mux.Handle("/mygame/", myGameRoutes(cfg.AllowedOrigins()))
+mux.Handle("/", srv.Handler())
+err := srv.Run(ctx, mux) // listeners + room GC + graceful shutdown
+```
+
 ## Deployment
 
 **Recommended: the self-contained kit** — everything in `~/lobbylink`
