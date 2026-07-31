@@ -1,0 +1,5 @@
+module CDataChannel [system] {
+    header "/usr/local/include/rtc/rtc.h"
+    link "datachannel"
+    export *
+}

@@ -1,8 +1,8 @@
 # lobbylink
 
 Instant lobby-based multiplayer connectivity via WebRTC DataChannels
-with coturn fallback: a Go signaling/lobby server plus TypeScript
-(browser) and Rust (native) client libraries. Full design spec:
+with coturn fallback: a Go signaling/lobby server plus wire-compatible
+client libraries for browsers and native apps. Full design spec:
 [lobbylink_implementation_guide.md](lobbylink_implementation_guide.md).
 
 ## Status
@@ -13,8 +13,25 @@ with coturn fallback: a Go signaling/lobby server plus TypeScript
   dependencies, built by plain `tsc` (`make` in `clients/ts`), browser
   test suite passes against production including forced-TURN relay.
   See [clients/ts/README.md](clients/ts/README.md) for the API and the
-  wire/framing contract.
-- **Rust client** (`clients/rust`): next.
+  wire/framing contract that every other client mirrors.
+- **Rust client** (`clients/rust`): implemented — native (tokio +
+  webrtc-rs) and wasm32 (browser) backends from one crate.
+- **Java client** (`clients/java`): implemented — webrtc-java native
+  bindings; games build with plain `javac` against a folder of jars.
+- **Go client** (`clients/go`): implemented — pure Go (pion/webrtc, no
+  cgo), loopback integration tests plus verified against production
+  including forced-TURN relay.
+- **C++ client** (`clients/cpp`): implemented — C++17 on libdatachannel,
+  CMake build.
+- **Swift client** (`clients/swift`): implemented — SwiftPM package;
+  Foundation WebSocket signaling + libdatachannel's C API for the peer
+  mesh.
+
+Example games live in [`examples/`](examples/README.md) — asteroids
+(TS/Rust/wasm, one shared wire protocol), snake (Java), tarsus (TS),
+console tetris with garbage attacks (Go, `examples/tetris-go`) — plus
+minimal chat apps in several clients' `examples/` folders that all
+interoperate in one room.
 
 ## Build & test
 
