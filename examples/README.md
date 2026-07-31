@@ -24,6 +24,12 @@ lobbylink client) to wasm. All three share the same wire protocol.
 > field driven by a shared clock and an automatic clock leader). Build it with
 > plain `javac`; no build tool needed.
 
+> **Prefer falling blocks?** [`tetris-go/`](tetris-go) is a console tetris on
+> the [Go client](../clients/go) — single player as-is, and in a shared room
+> every line you clear bumps garbage rows into your opponents' boards over the
+> reliable channel while ~5 Hz best-effort STATE packets render everyone's
+> board live in your terminal.
+
 > **Want an open world with NPCs?** [`tarsus/`](tarsus) is a TypeScript
 > spaceship game with drop-in multiplayer: pilots broadcast their ships and
 > lasers, the *victim* reports damage on the reliable channel, the lowest-id
