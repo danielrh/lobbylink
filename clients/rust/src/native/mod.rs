@@ -221,6 +221,7 @@ impl P2PGame {
             rtc_ice_servers,
             opts.force_relay,
             opts.storage_path.clone(),
+            !opts.disable_keepalive,
         );
         tokio::spawn(actor.run(cmd_rx, internal_rx));
 

@@ -19,3 +19,6 @@ pub const RELIABLE_CHANNEL_ID: u16 = 1;
 pub const BEST_EFFORT_CHANNEL_ID: u16 = 2;
 /// Automatic ICE-failure rebuilds per peer before giving up.
 pub const MAX_PEER_REBUILDS: u32 = 3;
+/// Interval of the signaling WebSocket ping (native backend) that keeps
+/// idle proxies and NATs from dropping the connection.
+pub const KEEPALIVE_SECS: u64 = 25;

@@ -78,6 +78,14 @@ pub struct ConnectOptions {
     /// store supersede each other.
     #[cfg(not(target_arch = "wasm32"))]
     pub storage_path: Option<std::path::PathBuf>,
+    /// Do not send a WebSocket ping every `KEEPALIVE_SECS` while the
+    /// signaling connection is idle. Once every peer link is up a game
+    /// sends nothing over signaling, and reverse proxies / NATs drop
+    /// idle connections (Apache's mod_proxy_wstunnel after `Timeout`),
+    /// after which no one else can join. Pings are protocol-level, so
+    /// the server never sees them as messages.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub disable_keepalive: bool,
     /// Origin header for the WS handshake. The server allowlists
     /// origins; defaults to the http(s) origin of `server` (which is
     /// allowlisted on servers that host their own web client). An

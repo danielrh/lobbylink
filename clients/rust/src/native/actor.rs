@@ -125,6 +125,7 @@ pub(super) struct Actor {
     ice_servers: Vec<RTCIceServer>,
     force_relay: bool,
     storage_path: Option<PathBuf>,
+    keepalive: bool,
     fatal_seen: bool,
     closed: bool,
 }
@@ -142,6 +143,7 @@ impl Actor {
         ice_servers: Vec<RTCIceServer>,
         force_relay: bool,
         storage_path: Option<PathBuf>,
+        keepalive: bool,
     ) -> Self {
         Self {
             self_id,
@@ -160,6 +162,7 @@ impl Actor {
             ice_servers,
             force_relay,
             storage_path,
+            keepalive,
             fatal_seen: false,
             closed: false,
         }
@@ -184,8 +187,22 @@ impl Actor {
         for player_id in targets {
             self.initiate_peer(player_id).await;
         }
+        // Signaling keepalive: a WebSocket ping (answered by the server's
+        // WebSocket layer, never seen as a lobby message) so an idle
+        // proxy or NAT does not drop the signaling connection mid-game.
+        let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(
+            crate::core::limits::KEEPALIVE_SECS,
+        ));
+        keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        keepalive.tick().await; // the first tick completes immediately
+        let mut signaling_open = true;
         loop {
             tokio::select! {
+                _ = keepalive.tick(), if self.keepalive && signaling_open && !self.closed => {
+                    if self.ws_tx.send(Message::Ping(bytes::Bytes::new())).await.is_err() {
+                        signaling_open = false;
+                    }
+                }
                 cmd = cmd_rx.recv() => match cmd {
                     Some(Cmd::Close { done }) => {
                         self.shutdown().await;
