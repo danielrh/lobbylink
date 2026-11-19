@@ -17,6 +17,15 @@ const (
 	TypeClaimSlot = "claim-slot"
 	TypeSignal    = "signal"
 	TypeLeave     = "leave"
+	// TypePing is a keepalive: {"type":"ping"}. It asks for nothing and
+	// gets no answer. A client that cannot send WebSocket ping frames (a
+	// browser) sends it every 25 s or so, joined or not, so that proxies
+	// and NATs do not drop a signaling connection with nothing to say
+	// (Apache's mod_proxy_wstunnel after its Timeout), and so that its
+	// seat is not silent for the claim timer. Servers from before this
+	// type answered it with an invalid-message error and carried on, which
+	// such clients ignore: the same line works against both.
+	TypePing = "ping"
 )
 
 // Message type strings, server -> client.
@@ -259,6 +268,8 @@ func ParseClientMessage(data []byte) (*ClientMessage, error) {
 			return nil, err
 		}
 	case TypeLeave:
+		// no fields
+	case TypePing:
 		// no fields
 	case "":
 		return nil, Errf(ErrCodeInvalidMessage, "missing message type")

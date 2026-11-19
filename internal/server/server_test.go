@@ -354,6 +354,28 @@ func TestSignalErrorsOverWS(t *testing.T) {
 	expectError(t, a, protocol.ErrCodeInvalidTarget)
 }
 
+// A keepalive ping is accepted before and after joining and answered
+// with nothing: the next message's reply is the next thing read.
+func TestPingIsSilentOverWS(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+
+	a := dial(t, ts, okOrigin)
+	send(t, a, `{"type":"ping"}`)
+	send(t, a, `{"type":"join","code":"PING01","create":{"maxPlayers":2}}`)
+	expect(t, a, protocol.TypeJoined) // not an error for the ping before it
+
+	send(t, a, `{"type":"ping"}`)
+	send(t, a, `{"type":"ping","futureField":1}`)
+	send(t, a, `{"type":"signal","to":1,"payload":{"kind":"offer"}}`)
+	expectError(t, a, protocol.ErrCodeInvalidTarget) // the signal's own error, nothing for the pings
+
+	// The room is still there for a second player.
+	b := dial(t, ts, okOrigin)
+	send(t, b, `{"type":"join","code":"PING01"}`)
+	expect(t, b, protocol.TypeJoined)
+	expect(t, a, protocol.TypePlayerJoined)
+}
+
 func TestResumeFlowOverWS(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
 
