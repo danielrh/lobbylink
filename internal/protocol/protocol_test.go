@@ -74,6 +74,9 @@ func TestParseClientMessage(t *testing.T) {
 	mustParse(t, `{"type":"signal","to":0,"payload":{"kind":"answer","sdp":"x"}}`)
 	mustParse(t, `{"type":"signal","to":0,"payload":{"kind":"ice","candidate":{"candidate":"..."}}}`)
 	mustParse(t, `{"type":"leave"}`)
+	if m = mustParse(t, `{"type":"ping"}`); m.Type != TypePing {
+		t.Errorf("ping parse wrong: %+v", m)
+	}
 
 	// Unknown extra fields are tolerated (forward compatibility).
 	mustParse(t, `{"type":"leave","futureField":123}`)
