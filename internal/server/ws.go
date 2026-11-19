@@ -192,6 +192,9 @@ func (s *Server) readLoop(ctx context.Context, client *wsClient, origin string) 
 				sess.Room.Leave(sess.PlayerID, client)
 				sess = nil
 			}
+		case protocol.TypePing:
+			// A keepalive: the traffic is its whole point (and Touch
+			// above has counted it as liveness). Nothing is answered.
 		}
 	}
 }
