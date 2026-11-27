@@ -18,6 +18,7 @@ const (
 	maxFramePayload     = 64 * 1024
 	maxReliableMessage  = 16 * 1024 * 1024
 	maxReassemblyChunks = 4096
+	maxInflightMessages = 32
 	reassemblyTimeout   = 30 * time.Second
 	maxBestEffort       = 16_000
 )
@@ -89,11 +90,17 @@ type reassembly struct {
 // reassembler rebuilds chunked reliable messages from one sender,
 // keyed by msgId. Incomplete messages are dropped after 30s.
 type reassembler struct {
-	inflight map[uint32]*reassembly
+	inflight      map[uint32]*reassembly
+	inflightBytes int
 }
 
 func newReassembler() *reassembler {
 	return &reassembler{inflight: make(map[uint32]*reassembly)}
+}
+
+func (r *reassembler) remove(id uint32, entry *reassembly) {
+	r.inflightBytes -= entry.bytes
+	delete(r.inflight, id)
 }
 
 // push feeds one frame; it returns the complete message once the last
@@ -101,15 +108,19 @@ func newReassembler() *reassembler {
 func (r *reassembler) push(f frame, now time.Time) []byte {
 	for id, entry := range r.inflight {
 		if now.Sub(entry.startedAt) > reassemblyTimeout {
-			delete(r.inflight, id)
+			r.remove(id, entry)
 		}
 	}
 	entry := r.inflight[f.msgID]
 	if entry != nil && entry.total != f.total {
 		// msgId reuse with different geometry: treat as a new message.
+		r.remove(f.msgID, entry)
 		entry = nil
 	}
 	if entry == nil {
+		if len(r.inflight) >= maxInflightMessages || len(f.payload) > maxReliableMessage-r.inflightBytes {
+			return nil
+		}
 		entry = &reassembly{
 			total:     f.total,
 			chunks:    make([][]byte, f.total),
@@ -118,18 +129,20 @@ func (r *reassembler) push(f frame, now time.Time) []byte {
 		r.inflight[f.msgID] = entry
 	}
 	if entry.chunks[f.seq] == nil {
-		entry.chunks[f.seq] = append([]byte(nil), f.payload...)
-		entry.received++
-		entry.bytes += len(f.payload)
-		if entry.bytes > maxReliableMessage {
-			delete(r.inflight, f.msgID)
+		if len(f.payload) > maxReliableMessage-r.inflightBytes {
+			r.remove(f.msgID, entry)
 			return nil
 		}
+		// Keep a received zero-length chunk distinct from a missing chunk.
+		entry.chunks[f.seq] = append([]byte{}, f.payload...)
+		entry.received++
+		entry.bytes += len(f.payload)
+		r.inflightBytes += len(f.payload)
 	}
 	if entry.received < entry.total {
 		return nil
 	}
-	delete(r.inflight, f.msgID)
+	r.remove(f.msgID, entry)
 	out := make([]byte, 0, entry.bytes)
 	for _, chunk := range entry.chunks {
 		out = append(out, chunk...)

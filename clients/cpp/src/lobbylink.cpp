@@ -49,9 +49,10 @@ constexpr std::size_t kFrameHeaderLen = 18;
 constexpr std::size_t kChunkPayload = 16 * 1024;
 // A received frame may not carry more payload than this.
 constexpr std::size_t kMaxFramePayload = 64 * 1024;
-// Send- and receive-side cap on one reliable message.
+// Send-side cap on one reliable message and receive-side aggregate per peer.
 constexpr std::size_t kMaxReliableMessage = 16 * 1024 * 1024;
 constexpr std::uint32_t kMaxReassemblyChunks = 4096;
+constexpr std::size_t kMaxInflightMessages = 32;
 constexpr auto kReassemblyTimeout = std::chrono::seconds(30);
 constexpr std::size_t kMaxBestEffort = 16'000;
 // Pause chunk sends above this bufferedAmount...
@@ -257,16 +258,19 @@ public:
         auto now = std::chrono::steady_clock::now();
         for (auto it = inflight_.begin(); it != inflight_.end();) {
             if (now - it->second.startedAt > kReassemblyTimeout)
-                it = inflight_.erase(it);
+                it = erase(it);
             else
                 ++it;
         }
         auto it = inflight_.find(f.msgId);
         if (it != inflight_.end() && it->second.total != f.total) {
-            inflight_.erase(it);
+            erase(it);
             it = inflight_.end();
         }
         if (it == inflight_.end()) {
+            if (inflight_.size() >= kMaxInflightMessages ||
+                f.payloadLen > kMaxReliableMessage - inflightBytes_)
+                return std::nullopt;
             Entry e;
             e.total = f.total;
             e.chunks.resize(f.total);
@@ -276,15 +280,15 @@ public:
         }
         Entry &e = it->second;
         if (!e.have[f.seq]) {
+            if (f.payloadLen > kMaxReliableMessage - inflightBytes_) {
+                erase(it);
+                return std::nullopt;
+            }
             e.chunks[f.seq].assign(f.payload, f.payload + f.payloadLen);
             e.have[f.seq] = true;
             e.received++;
             e.bytes += f.payloadLen;
-            if (e.bytes > kMaxReliableMessage) {
-                warn("dropping oversized reliable message");
-                inflight_.erase(it);
-                return std::nullopt;
-            }
+            inflightBytes_ += f.payloadLen;
         }
         if (e.received < e.total)
             return std::nullopt;
@@ -292,7 +296,7 @@ public:
         out.reserve(e.bytes);
         for (auto &chunk : e.chunks)
             out.insert(out.end(), chunk.begin(), chunk.end());
-        inflight_.erase(it);
+        erase(it);
         return out;
     }
 
@@ -305,7 +309,14 @@ private:
         std::size_t bytes = 0;
         std::chrono::steady_clock::time_point startedAt;
     };
-    std::map<std::uint32_t, Entry> inflight_;
+    using Inflight = std::map<std::uint32_t, Entry>;
+    Inflight::iterator erase(Inflight::iterator it) {
+        inflightBytes_ -= it->second.bytes;
+        return inflight_.erase(it);
+    }
+
+    Inflight inflight_;
+    std::size_t inflightBytes_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -387,11 +398,13 @@ struct PeerLink {
     const int playerId;
     const bool initiator;
     std::shared_ptr<rtc::PeerConnection> pc;
-    std::shared_ptr<rtc::DataChannel> reliable;
-    std::shared_ptr<rtc::DataChannel> bestEffort;
 
+    // Serializes channel creation with teardown. RTC callbacks do not take it.
+    std::mutex channelLifecycleMu;
     std::mutex mu;
     std::condition_variable cv;
+    std::shared_ptr<rtc::DataChannel> reliable;
+    std::shared_ptr<rtc::DataChannel> bestEffort;
     bool closed = false;
     bool reliableOpen = false;
     std::uint32_t nextMsgId = 0;
@@ -432,29 +445,31 @@ struct PeerLink {
 
     // waitReliableOpen blocks until the reliable channel opens, the
     // link dies, or the channel timeout passes; throws on the latter two.
-    void waitReliableOpen() {
+    std::shared_ptr<rtc::DataChannel> waitReliableOpen() {
         std::unique_lock<std::mutex> lock(mu);
-        if (!cv.wait_for(lock, kChannelTimeout,
-                         [&] { return reliableOpen || closed; }))
+        if (!cv.wait_for(lock, kChannelTimeout, [&] {
+                return closed || (reliable && (reliableOpen || reliable->isClosed()));
+            }))
             throw LobbyError("channel-timeout", "timed out opening channel to player " +
                                                     std::to_string(playerId));
-        if (closed)
+        if (closed || reliable->isClosed())
             throw LobbyError("peer-closed",
                              "connection to player " + std::to_string(playerId) +
                                  " closed");
+        return reliable;
     }
 
     // awaitDrain blocks until bufferedAmount is back under the
     // low-water mark (or the link dies). Called only with
     // bufferedAmount over the high-water mark.
-    void awaitDrain() {
+    void awaitDrain(const rtc::DataChannel &channel) {
         std::unique_lock<std::mutex> lock(mu);
         for (;;) {
-            if (closed)
+            if (closed || channel.isClosed())
                 throw LobbyError("peer-closed",
                                  "connection to player " + std::to_string(playerId) +
                                      " closed");
-            if (reliable->bufferedAmount() <= kSendLowWater)
+            if (channel.bufferedAmount() <= kSendLowWater)
                 return;
             // onBufferedAmountLow pings cv; the timeout is a fallback
             // poll for teardown races.
@@ -466,7 +481,7 @@ struct PeerLink {
     // channel, applying backpressure. Sends to one peer are serialized.
     void sendReliableMessage(const std::uint8_t *data, std::size_t size) {
         std::lock_guard<std::mutex> sendLock(sendMu);
-        waitReliableOpen();
+        auto channel = waitReliableOpen();
         std::uint32_t msgId;
         {
             std::lock_guard<std::mutex> lock(mu);
@@ -478,12 +493,12 @@ struct PeerLink {
                 throw LobbyError("send-failed", "connection to player " +
                                                     std::to_string(playerId) +
                                                     " closed mid-send");
-            if (reliable->bufferedAmount() > kSendHighWater)
-                awaitDrain();
+            if (channel->bufferedAmount() > kSendHighWater)
+                awaitDrain(*channel);
             const std::size_t start = std::size_t(seq) * kChunkPayload;
             const std::size_t len = std::min(kChunkPayload, size - start);
             try {
-                reliable->send(makeFrame(msgId, seq, total, data + start, len));
+                channel->send(makeFrame(msgId, seq, total, data + start, len));
             } catch (const std::exception &e) {
                 throw LobbyError("send-failed", "send to player " +
                                                     std::to_string(playerId) +
@@ -516,28 +531,32 @@ struct PeerLink {
     // nothing references the game afterwards; safe to call from any
     // thread except the link's own rtc callbacks.
     void closeLink() {
+        std::lock_guard<std::mutex> lifecycle(channelLifecycleMu);
+        std::shared_ptr<rtc::DataChannel> rel, best;
         {
             std::lock_guard<std::mutex> lock(mu);
             if (closed)
                 return;
             closed = true;
+            rel = std::move(reliable);
+            best = std::move(bestEffort);
             pendingCandidates.clear();
             havePending = false;
             cv.notify_all();
         }
-        if (reliable)
-            reliable->resetCallbacks();
-        if (bestEffort)
-            bestEffort->resetCallbacks();
+        if (rel)
+            rel->resetCallbacks();
+        if (best)
+            best->resetCallbacks();
         pc->resetCallbacks();
         try {
-            if (reliable)
-                reliable->close();
+            if (rel)
+                rel->close();
         } catch (...) {
         }
         try {
-            if (bestEffort)
-                bestEffort->close();
+            if (best)
+                best->close();
         } catch (...) {
         }
         try {
@@ -851,67 +870,69 @@ struct P2PGame::Impl {
     // createChannels creates the two pre-negotiated DataChannels and
     // wires the data path. Both sides create both channels.
     void createChannels(const std::shared_ptr<PeerLink> &link) {
+        std::lock_guard<std::mutex> lifecycle(link->channelLifecycleMu);
+        if (link->isClosed())
+            return;
         std::weak_ptr<PeerLink> wlink = link;
         Impl *g = this;
+        std::shared_ptr<rtc::DataChannel> reliable, bestEffort;
         try {
             rtc::DataChannelInit reliableInit;
             reliableInit.negotiated = true;
             reliableInit.id = kReliableChannelId;
-            link->reliable = link->pc->createDataChannel("reliable", reliableInit);
+            reliable = link->pc->createDataChannel("reliable", reliableInit);
 
             rtc::DataChannelInit bestEffortInit;
             bestEffortInit.negotiated = true;
             bestEffortInit.id = kBestEffortChannelId;
             bestEffortInit.reliability.unordered = true;
             bestEffortInit.reliability.maxRetransmits = 0;
-            link->bestEffort =
-                link->pc->createDataChannel("best-effort", bestEffortInit);
+            bestEffort = link->pc->createDataChannel("best-effort", bestEffortInit);
         } catch (const std::exception &e) {
             warn("cannot create data channels for player " +
                  std::to_string(link->playerId) + ": " + e.what());
             return;
         }
 
-        link->reliable->onOpen([wlink] {
+        reliable->onOpen([wlink] {
             if (auto l = wlink.lock()) {
                 std::lock_guard<std::mutex> lock(l->mu);
                 l->reliableOpen = true;
                 l->cv.notify_all();
             }
         });
-        link->reliable->onClosed([wlink] {
+        reliable->onClosed([wlink] {
             if (auto l = wlink.lock()) {
                 std::lock_guard<std::mutex> lock(l->mu);
-                l->cv.notify_all(); // wake senders; closed is checked there
+                l->reliableOpen = false;
+                l->cv.notify_all();
             }
         });
-        link->reliable->setBufferedAmountLowThreshold(kSendLowWater);
-        link->reliable->onBufferedAmountLow([wlink] {
+        reliable->setBufferedAmountLowThreshold(kSendLowWater);
+        reliable->onBufferedAmountLow([wlink] {
             if (auto l = wlink.lock()) {
                 std::lock_guard<std::mutex> lock(l->mu);
                 l->cv.notify_all();
             }
         });
-        link->reliable->onMessage([g, wlink](rtc::message_variant data) {
+        reliable->onMessage([g, wlink](rtc::message_variant data) {
             auto l = wlink.lock();
             if (!l || l->isClosed())
                 return;
             g->onReliableData(l, data);
         });
-        link->bestEffort->onMessage([g, wlink](rtc::message_variant data) {
+        bestEffort->onMessage([g, wlink](rtc::message_variant data) {
             auto l = wlink.lock();
             if (!l || l->isClosed())
                 return;
             g->emit(messageEvent(l->playerId, MessageKind::BestEffort,
                                  toBytes(data)));
         });
-        // A racing open before onOpen was registered would otherwise be
-        // missed; latch the current state.
-        if (link->reliable->isOpen()) {
-            std::lock_guard<std::mutex> lock(link->mu);
-            link->reliableOpen = true;
-            link->cv.notify_all();
-        }
+        std::lock_guard<std::mutex> lock(link->mu);
+        link->reliableOpen = reliable->isOpen();
+        link->reliable = std::move(reliable);
+        link->bestEffort = std::move(bestEffort);
+        link->cv.notify_all();
     }
 
     static std::vector<std::uint8_t> toBytes(const rtc::message_variant &data) {
@@ -1212,13 +1233,15 @@ struct P2PGame::Impl {
             closedFlag = true;
         }
         closedAtomic.store(true);
-        // Detach the WebSocket callbacks from this game first; the ws
-        // object itself stays alive until destruction so an in-flight
-        // callback never touches freed memory.
+        // Detach first, then drain callbacks that already acquired the
+        // game pointer. Callback reset waits for running callbacks, so
+        // it must run outside both the context lock and the send lock.
         if (ctx) {
             std::lock_guard<std::mutex> lock(ctx->m);
             ctx->game = nullptr;
         }
+        if (ws)
+            ws->resetCallbacks();
         sendWs(json{{"type", "leave"}});
         {
             std::lock_guard<std::mutex> lock(wsMu);

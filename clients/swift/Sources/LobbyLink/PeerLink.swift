@@ -78,6 +78,8 @@ final class PeerLink: @unchecked Sendable {
 
     /// Serializes reliable sends to this peer.
     private let sendLock = NSLock()
+    /// Serializes channel registration with close. Native callbacks do not take it.
+    private let channelLifecycleLock = NSLock()
 
     /// Last connection state seen, for the rebuild-still-failed check.
     private var lastState: rtcState = RTC_NEW
@@ -243,6 +245,8 @@ final class PeerLink: @unchecked Sendable {
     /// callbacks have drained, so it must never run on a libdatachannel
     /// callback thread, and the caller must not hold the game lock.
     func close() {
+        channelLifecycleLock.lock()
+        defer { channelLifecycleLock.unlock() }
         cond.lock()
         if closed {
             cond.unlock()
@@ -263,6 +267,9 @@ final class PeerLink: @unchecked Sendable {
     // -- channels ------------------------------------------------------------
 
     private func createChannels() {
+        channelLifecycleLock.lock()
+        defer { channelLifecycleLock.unlock() }
+        guard !isClosed else { return }
         let ptr = Unmanaged.passUnretained(self).toOpaque()
 
         var reliableInit = rtcDataChannelInit()
@@ -281,6 +288,8 @@ final class PeerLink: @unchecked Sendable {
         let be = rtcCreateDataChannelEx(pc, "best-effort", &bestEffortInit)
 
         guard rel >= 0, be >= 0 else {
+            if rel >= 0 { rtcDeleteDataChannel(rel) }
+            if be >= 0 { rtcDeleteDataChannel(be) }
             logWarn("cannot create data channels to player \(playerID) (\(rel), \(be))")
             return
         }

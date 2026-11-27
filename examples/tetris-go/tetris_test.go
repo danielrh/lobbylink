@@ -130,6 +130,14 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodeStateRejectsInvalidBoardCell(t *testing.T) {
+	var state stateMsg
+	state.board[boardH-1][boardW-1] = cellGarbage + 1
+	if _, ok := decodeState(encodeState(&state)); ok {
+		t.Fatal("accepted a board cell outside the supported color table")
+	}
+}
+
 func TestAttackRoundTrip(t *testing.T) {
 	for n := 1; n <= 4; n++ {
 		got, ok := decodeAttack(encodeAttack(n))

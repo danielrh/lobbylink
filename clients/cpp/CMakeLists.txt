@@ -15,6 +15,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(LibDataChannel REQUIRED)
 find_package(Threads REQUIRED)
 
+include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_LIBRARIES LibDataChannel::LibDataChannel)
+unset(LOBBYLINK_RTC_WEBSOCKET_HEADERS CACHE)
+check_cxx_source_compiles([=[
+    #include <rtc/rtc.hpp>
+    #include <type_traits>
+    using OpenWithHeaders = void (rtc::WebSocket::*)(
+        const std::string &, const rtc::WebSocket::Headers &);
+    static_assert(std::is_same_v<
+        decltype(static_cast<OpenWithHeaders>(&rtc::WebSocket::open)), OpenWithHeaders>);
+    int main() {}
+]=] LOBBYLINK_RTC_WEBSOCKET_HEADERS)
+cmake_pop_check_state()
+if(NOT LOBBYLINK_RTC_WEBSOCKET_HEADERS)
+    message(FATAL_ERROR "LobbyLink requires libdatachannel with WebSocket enabled and custom "
+        "request headers (WebSocket::open(url, headers)). See clients/cpp/README.md.")
+endif()
+
 add_library(lobbylink src/lobbylink.cpp)
 target_include_directories(lobbylink
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include

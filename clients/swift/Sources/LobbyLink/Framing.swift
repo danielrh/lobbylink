@@ -82,37 +82,49 @@ final class Reassembler {
         let startedAt: Date
     }
 
+    private static let maxInflightMessages = 32
     private var inflight: [UInt32: Entry] = [:]
+    private var inflightBytes = 0
+
+    private func remove(_ id: UInt32) {
+        if let entry = inflight.removeValue(forKey: id) {
+            inflightBytes -= entry.bytes
+        }
+    }
 
     /// Feeds one frame; returns the complete message once the last
     /// chunk arrives, else nil.
     func push(_ f: Frame, now: Date) -> Data? {
         for (id, entry) in inflight where now.timeIntervalSince(entry.startedAt) > Framing.reassemblyTimeout {
-            inflight.removeValue(forKey: id)
+            remove(id)
         }
         var entry = inflight[f.msgID]
         if let e = entry, e.total != f.total {
             // msgId reuse with different geometry: treat as a new message.
+            remove(f.msgID)
             entry = nil
         }
         if entry == nil {
+            guard inflight.count < Self.maxInflightMessages,
+                  f.payload.count <= Framing.maxReliableMessage - inflightBytes else { return nil }
             entry = Entry(total: f.total, chunks: [[UInt8]?](repeating: nil, count: Int(f.total)), startedAt: now)
         }
         var e = entry!
         if e.chunks[Int(f.seq)] == nil {
+            guard f.payload.count <= Framing.maxReliableMessage - inflightBytes else {
+                remove(f.msgID)
+                return nil
+            }
             e.chunks[Int(f.seq)] = f.payload
             e.received += 1
             e.bytes += f.payload.count
-            if e.bytes > Framing.maxReliableMessage {
-                inflight.removeValue(forKey: f.msgID)
-                return nil
-            }
+            inflightBytes += f.payload.count
         }
+        inflight[f.msgID] = e
         if e.received < e.total {
-            inflight[f.msgID] = e
             return nil
         }
-        inflight.removeValue(forKey: f.msgID)
+        remove(f.msgID)
         var out = Data(capacity: e.bytes)
         for chunk in e.chunks {
             out.append(contentsOf: chunk ?? [])

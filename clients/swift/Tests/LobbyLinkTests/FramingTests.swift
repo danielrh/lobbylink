@@ -77,4 +77,29 @@ final class FramingTests: XCTestCase {
         XCTAssertEqual(Framing.chunkCount(Framing.chunkPayload), 1)
         XCTAssertEqual(Framing.chunkCount(Framing.chunkPayload + 1), 2)
     }
+
+    func testReassemblerInflightLimits() {
+        let now = Date()
+        let slots = Reassembler()
+        for id in UInt32(1)...32 {
+            XCTAssertNil(slots.push(Frame(msgID: id, seq: 0, total: 2, payload: [1]), now: now))
+        }
+        XCTAssertNil(slots.push(Frame(msgID: 33, seq: 0, total: 2, payload: [1]), now: now))
+        XCTAssertNil(slots.push(Frame(msgID: 33, seq: 1, total: 2, payload: [2]), now: now))
+        XCTAssertEqual(slots.push(Frame(msgID: 1, seq: 1, total: 2, payload: [2]), now: now), Data([1, 2]))
+        XCTAssertNil(slots.push(Frame(msgID: 33, seq: 0, total: 2, payload: [1]), now: now))
+        XCTAssertEqual(slots.push(Frame(msgID: 33, seq: 1, total: 2, payload: [2]), now: now), Data([1, 2]))
+
+        let bytes = Reassembler()
+        let chunk = [UInt8](repeating: 1, count: Framing.maxFramePayload)
+        let chunks = UInt32(Framing.maxReliableMessage / chunk.count)
+        for seq in 0..<chunks {
+            XCTAssertNil(bytes.push(Frame(msgID: 1, seq: seq, total: chunks + 1, payload: chunk), now: now))
+        }
+        XCTAssertNil(bytes.push(Frame(msgID: 2, seq: 0, total: 2, payload: [1]), now: now))
+        XCTAssertEqual(bytes.push(Frame(msgID: 1, seq: chunks, total: chunks + 1, payload: []), now: now)?.count,
+                       Framing.maxReliableMessage)
+        XCTAssertNil(bytes.push(Frame(msgID: 2, seq: 1, total: 2, payload: [2]), now: now))
+        XCTAssertEqual(bytes.push(Frame(msgID: 2, seq: 0, total: 2, payload: [1]), now: now), Data([1, 2]))
+    }
 }

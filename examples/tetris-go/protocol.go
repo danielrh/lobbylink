@@ -73,7 +73,12 @@ func decodeState(data []byte) (stateMsg, bool) {
 		level: data[8],
 	}
 	for y := 0; y < boardH; y++ {
-		copy(m.board[y][:], data[9+y*boardW:9+(y+1)*boardW])
+		for x, cell := range data[9+y*boardW : 9+(y+1)*boardW] {
+			if cell > cellGarbage {
+				return stateMsg{}, false
+			}
+			m.board[y][x] = cell
+		}
 	}
 	nameLen := int(data[209])
 	if nameLen > maxNameLen || 210+nameLen > len(data) {

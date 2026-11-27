@@ -16,7 +16,13 @@ implementation — nothing of it leaks into the public header.
 
 ## Build
 
-Install libdatachannel where CMake can find it (v0.24 or newer), then:
+Install a libdatachannel build with WebSocket support and custom request
+headers (`WebSocket::open(url, headers)`) where CMake can find it.
+LobbyLink uses this API to send the `Origin` header. The v0.24 releases
+lack it. The upstream revision
+[`b8f46d9`](https://github.com/paullouisageneau/libdatachannel/commit/b8f46d97769e0081b1739d9dd50ccd71dc745d8c)
+has the required headers. Build from that revision with its submodules,
+or use a newer build that exposes the same API. Then run:
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release

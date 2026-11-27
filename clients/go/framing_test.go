@@ -91,6 +91,43 @@ func TestReassemblerTimeout(t *testing.T) {
 	}
 }
 
+func TestReassemblerInflightLimits(t *testing.T) {
+	r := newReassembler()
+	now := time.Now()
+	for id := uint32(1); id <= maxInflightMessages; id++ {
+		r.push(frame{msgID: id, total: 2, payload: []byte("a")}, now)
+	}
+	id := uint32(maxInflightMessages + 1)
+	r.push(frame{msgID: id, total: 2, payload: []byte("a")}, now)
+	if len(r.inflight) != maxInflightMessages || r.inflightBytes != maxInflightMessages {
+		t.Fatal("reassembler exceeded the in-flight message limit")
+	}
+	if got := r.push(frame{msgID: 1, seq: 1, total: 2, payload: []byte("b")}, now); string(got) != "ab" {
+		t.Fatalf("completing a buffered message returned %q", got)
+	}
+	r.push(frame{msgID: id, total: 2, payload: []byte("a")}, now)
+	if _, ok := r.inflight[id]; !ok {
+		t.Fatal("completing a message did not free a slot")
+	}
+
+	r = newReassembler()
+	chunk := make([]byte, maxFramePayload)
+	chunks := uint32(maxReliableMessage / maxFramePayload)
+	for seq := uint32(0); seq < chunks; seq++ {
+		r.push(frame{msgID: 1, seq: seq, total: chunks + 1, payload: chunk}, now)
+	}
+	r.push(frame{msgID: 2, total: 2, payload: chunk}, now)
+	if len(r.inflight) != 1 || r.inflightBytes != maxReliableMessage {
+		t.Fatal("reassembler exceeded the aggregate-byte limit")
+	}
+	if got := r.push(frame{msgID: 1, seq: chunks, total: chunks + 1}, now); len(got) != maxReliableMessage {
+		t.Fatalf("maximum-size message emitted %d bytes", len(got))
+	}
+	if r.inflightBytes != 0 {
+		t.Fatal("completing a message did not release its byte budget")
+	}
+}
+
 func TestSignalingURL(t *testing.T) {
 	cases := map[string]string{
 		"https://example.com":              "wss://example.com/ws",
