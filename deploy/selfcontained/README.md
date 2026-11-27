@@ -14,15 +14,15 @@ Either entry point can be disabled by editing `~/lobbylink/config.toml`
 
 ## Assumed starting state
 
-- Ubuntu-ish server; you have SSH key access as a normal user and can
-  `sudo` interactively.
-- Apache already serves `https://DOMAIN/` with Let's Encrypt certs
-  under `/etc/letsencrypt/live/DOMAIN/` (only needed for the proxy
-  entry point).
+- Ubuntu or Debian server with systemd, SSH key access as a normal user,
+  and interactive `sudo`.
+- DNS for `DOMAIN` points to the server. Both entry points use a Let's
+  Encrypt certificate in `/etc/letsencrypt/live/DOMAIN/`. For the proxy
+  entry point, Apache already serves `https://DOMAIN/`.
 - coturn installed and running, possibly with a stock config
   (`apt-get install coturn` if missing).
-- Go 1.26+ on your **local** machine. Nothing needs to be built on the
-  server.
+- Python 3.8+ on the server for the capacity helper and Go 1.26.4+ on
+  your local machine to build the binary.
 
 ## Step 0 — build + upload (local machine, no sudo)
 
@@ -35,6 +35,10 @@ Builds the static binary, uploads it plus all the scripts below to
 only — an existing config is never overwritten), installs the systemd
 user unit, and restarts the service if it is already running. Re-run
 this same script for every upgrade.
+
+If the build machine targets a different OS or CPU by default, set
+`GOOS=linux` and `GOARCH` for the server when running the upload script.
+Use `amd64` for `x86_64` and `arm64` for `aarch64`.
 
 ## Step 1 — root setup (server, sudo)
 
@@ -88,13 +92,32 @@ Enables `proxy proxy_http proxy_wstunnel headers`, writes
 inside the existing TLS vhost (timestamped backup, `configtest` before
 reload). Nothing else in the vhost is touched.
 
+For standalone TLS, skip the Apache script and set `listen_http = ""`,
+`behind_proxy = false`, and `public_url = "https://DOMAIN:4443"` in
+`~/lobbylink/config.toml` before starting LobbyLink.
+
 ## Step 5 — start (server, no sudo)
 
 ```bash
 systemctl --user enable --now lobbylink
 ```
 
-## Step 6 — verify
+## Step 6 — configure relay capacity and firewall
+
+With coturn and LobbyLink running, run the capacity helper as root.
+
+```bash
+sudo python3 ~/lobbylink/increase-capacity.py --apply
+```
+
+This sets the coturn pool to 16,384 UDP relay ports (49152–65535), raises
+low service file-descriptor limits, and checks the LobbyLink room limits.
+It allows the relay range in UFW when UFW is active. Once TURN auth is
+enabled, allow `3478/udp` and `3478/tcp` in any active host firewall.
+If the provider also filters traffic, allow inbound UDP `49152–65535`,
+TCP and UDP `3478`, and TCP `443` and/or `4443` for the chosen entry points.
+
+## Step 7 — verify
 
 ```bash
 curl -s https://DOMAIN/lobbylink/healthz          # ok
@@ -116,4 +139,8 @@ relay candidate pair gets selected when direct paths are blocked.
 - Config: edit `~/lobbylink/config.toml`, then restart. Add game-site
   origins to `allowed_origins` — the WebSocket rejects any origin not
   listed.
+- Capacity: run `sudo python3 ~/lobbylink/increase-capacity.py` to preview
+  changes to a running installation. Run step 6 to apply them. A coturn
+  restart drops active TURN allocations and a LobbyLink restart clears
+  its in-memory rooms. Verify a join with forced TURN afterward.
 - Cert renewals: automatic (certbot deploy hook installed by step 1).

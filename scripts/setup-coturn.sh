@@ -54,7 +54,7 @@ if command -v ufw >/dev/null 2>&1; then
     ufw allow 3478/udp || true
     ufw allow 3478/tcp || true
     ufw allow 5349/tcp || true
-    ufw allow 49160:49260/udp || true
+    ufw allow 49152:65535/udp || true
 fi
 
 systemctl enable --now coturn 2>/dev/null || systemctl enable --now turnserver

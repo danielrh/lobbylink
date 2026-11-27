@@ -21,7 +21,8 @@ echo "== upload bundle"
 ssh "$TARGET" 'mkdir -p ~/lobbylink ~/.config/systemd/user'
 scp -q "$REPO/dist/p2p-lobby-server" "$TARGET:lobbylink/p2p-lobby-server.new"
 scp -q "$HERE/root-setup.sh" "$HERE/enable-turn-auth.sh" "$HERE/turn-fix-relay.sh" \
-    "$HERE/apache-setup.sh" "$HERE/turn-diag.sh" "$TARGET:lobbylink/"
+    "$HERE/apache-setup.sh" "$HERE/turn-diag.sh" "$HERE/increase-capacity.py" \
+    "$TARGET:lobbylink/"
 scp -q "$HERE/lobbylink.service" "$TARGET:.config/systemd/user/lobbylink.service"
 
 echo "== render config.toml (first upload only)"

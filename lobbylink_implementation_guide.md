@@ -301,8 +301,8 @@ use-auth-secret
 static-auth-secret=<SHARED_SECRET>
 cert=/var/lib/p2p-lobby/certs/fullchain.pem
 pkey=/var/lib/p2p-lobby/certs/privkey.pem
-min-port=49160
-max-port=49260
+min-port=49152
+max-port=65535
 fingerprint
 lt-cred-mech
 no-multicast-peers
@@ -317,7 +317,7 @@ Open firewall:
 3478/udp
 3478/tcp
 5349/tcp
-49160-49260/udp
+49152-65535/udp
 ```
 
 ### 5.2 Shared secret file
@@ -600,7 +600,7 @@ ufw allow 4443/tcp
 ufw allow 3478/udp
 ufw allow 3478/tcp
 ufw allow 5349/tcp
-ufw allow 49160:49260/udp
+ufw allow 49152:65535/udp
 ```
 
 ---

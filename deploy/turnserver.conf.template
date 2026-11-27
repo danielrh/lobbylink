@@ -9,8 +9,8 @@ use-auth-secret
 static-auth-secret=<SHARED_SECRET>
 cert=/var/lib/p2p-lobby/certs/fullchain.pem
 pkey=/var/lib/p2p-lobby/certs/privkey.pem
-min-port=49160
-max-port=49260
+min-port=49152
+max-port=65535
 fingerprint
 lt-cred-mech
 no-multicast-peers
