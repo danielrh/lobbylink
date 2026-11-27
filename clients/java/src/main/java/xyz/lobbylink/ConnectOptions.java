@@ -45,6 +45,12 @@ public final class ConnectOptions {
      * {@code --allow-no-origin}.
      */
     public String origin = null;
+    /**
+     * Do not send a WebSocket ping every 25 s. The ping keeps reverse proxies
+     * and NATs from dropping an idle signaling connection (after which no one
+     * else can join); disable it to test what a dropped connection does.
+     */
+    public boolean disableKeepalive = false;
     /** Print internal warnings (dropped frames, failed peers) to stderr. */
     public boolean verbose = false;
 
@@ -62,5 +68,6 @@ public final class ConnectOptions {
     public ConnectOptions forceRelay(boolean v) { this.forceRelay = v; return this; }
     public ConnectOptions storagePath(Path v) { this.storagePath = v; return this; }
     public ConnectOptions origin(String v) { this.origin = v; return this; }
+    public ConnectOptions disableKeepalive(boolean v) { this.disableKeepalive = v; return this; }
     public ConnectOptions verbose(boolean v) { this.verbose = v; return this; }
 }

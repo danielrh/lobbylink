@@ -100,6 +100,9 @@ type Options struct {
 	ICEServers []ICEServer
 	// ForceRelay forces TURN (iceTransportPolicy relay); for testing.
 	ForceRelay bool
+	// DisableKeepalive turns off the WebSocket ping sent every 25s to
+	// keep proxies and NATs from dropping an idle signaling connection.
+	DisableKeepalive bool
 	// ConnectTimeout bounds the join handshake; 0 means 20s.
 	ConnectTimeout time.Duration
 }

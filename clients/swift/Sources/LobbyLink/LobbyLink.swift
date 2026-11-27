@@ -102,6 +102,9 @@ public struct ConnectOptions: Sendable {
     public var iceServers: [ICEServer] = []
     /// Forces TURN (iceTransportPolicy relay); for testing.
     public var forceRelay: Bool = false
+    /// Turns off the WebSocket ping sent every 25 s to keep proxies and
+    /// NATs from dropping an idle signaling connection.
+    public var disableKeepalive: Bool = false
     /// Bounds the join handshake; 0 means 20 s.
     public var connectTimeout: TimeInterval = 20
 

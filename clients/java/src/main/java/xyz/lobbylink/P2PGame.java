@@ -90,7 +90,7 @@ public final class P2PGame implements AutoCloseable {
         String url = SignalingUrl.normalize(opts.server);
         String origin = opts.origin != null ? opts.origin : SignalingUrl.defaultOrigin(url);
 
-        Signaling sig = Signaling.connect(url, origin, Limits.CONNECT_TIMEOUT_MS);
+        Signaling sig = Signaling.connect(url, origin, Limits.CONNECT_TIMEOUT_MS, !opts.disableKeepalive);
 
         // All incoming messages funnel through one inbox; the handshake drains it
         // here for "joined", then the Actor's reader takes over — so no message

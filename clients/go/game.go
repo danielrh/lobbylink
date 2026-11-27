@@ -15,6 +15,9 @@ import (
 const (
 	defaultConnectTimeout = 20 * time.Second
 	wsWriteTimeout        = 10 * time.Second
+	// keepaliveInterval paces the signaling WebSocket ping that keeps
+	// idle proxies and NATs from dropping the connection.
+	keepaliveInterval = 25 * time.Second
 	// Server messages are small JSON (SDPs top out around a few KiB).
 	wsReadLimit = 1 << 20
 )
@@ -181,6 +184,9 @@ func Connect(ctx context.Context, opts Options) (*Game, error) {
 	}
 	go g.eventPump()
 	go g.readLoop()
+	if !opts.DisableKeepalive {
+		go g.keepaliveLoop()
+	}
 
 	// Lower ID initiates: offer to every connected peer with a higher
 	// ID. Lower-ID peers offer to us when they see player-joined.
@@ -393,6 +399,32 @@ func (g *Game) sendWS(msg any) {
 	if err := writeWS(ctx, g.ws, msg); err != nil {
 		// Socket died; the read loop reports the closure.
 		g.logger.Debug("signaling send failed", "err", err)
+	}
+}
+
+// keepaliveLoop pings the signaling WebSocket while it is idle. Once
+// every peer link is up a game sends nothing over signaling, and
+// reverse proxies and NATs drop a silent connection (Apache's
+// mod_proxy_wstunnel after its Timeout), after which nobody else can
+// join. A ping frame is answered by the server's WebSocket layer and
+// never seen as a lobby message.
+func (g *Game) keepaliveLoop() {
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.evAbort:
+			return
+		case <-ticker.C:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
+		err := g.ws.Ping(ctx)
+		cancel()
+		if err != nil {
+			// Socket died; the read loop reports the closure.
+			g.logger.Debug("signaling keepalive failed", "err", err)
+			return
+		}
 	}
 }
 

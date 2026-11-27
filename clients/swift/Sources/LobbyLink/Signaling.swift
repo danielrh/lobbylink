@@ -10,19 +10,27 @@ import FoundationNetworking
 final class Signaling: @unchecked Sendable {
     // Server messages are small JSON (SDPs top out around a few KiB).
     private static let readLimit = 1 << 20
+    /// Interval of the keepalive ping. Once every peer link is up a game
+    /// sends nothing over signaling, and reverse proxies and NATs drop a
+    /// silent connection (Apache's mod_proxy_wstunnel after its Timeout),
+    /// after which nobody else can join. A ping frame is answered by the
+    /// server's WebSocket layer and never seen as a lobby message.
+    private static let keepaliveInterval: TimeInterval = 25
 
     private let session: URLSession
     private let task: URLSessionWebSocketTask
     private let writeLock = NSLock()
     private let stateLock = NSLock()
     private var closed = false
+    private let keepaliveEnabled: Bool
+    private var keepalive: DispatchSourceTimer?
 
     var onText: ((String) -> Void)?
     var onClosed: (() -> Void)?
 
     /// Prepares the connection; nothing is sent until `start()`.
     /// `origin` "" sends no Origin header.
-    init(url: URL, origin: String, timeout: TimeInterval) {
+    init(url: URL, origin: String, timeout: TimeInterval, keepalive: Bool = true) {
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         if !origin.isEmpty {
@@ -31,11 +39,31 @@ final class Signaling: @unchecked Sendable {
         session = URLSession(configuration: .default)
         task = session.webSocketTask(with: request)
         task.maximumMessageSize = Signaling.readLimit
+        keepaliveEnabled = keepalive
     }
 
     func start() {
         task.resume()
         receiveNext()
+        stateLock.lock()
+        if keepaliveEnabled && !closed {
+            let timer = DispatchSource.makeTimerSource(queue: .global())
+            timer.schedule(deadline: .now() + Signaling.keepaliveInterval,
+                           repeating: Signaling.keepaliveInterval)
+            let task = self.task
+            timer.setEventHandler { task.sendPing { _ in } }
+            timer.resume()
+            keepalive = timer
+        }
+        stateLock.unlock()
+    }
+
+    /// Stops the keepalive timer; call with `stateLock` held.
+    private func stopKeepalive() {
+        if let timer = keepalive {
+            keepalive = nil
+            timer.cancel()
+        }
     }
 
     private func receiveNext() {
@@ -64,6 +92,7 @@ final class Signaling: @unchecked Sendable {
         stateLock.lock()
         let alreadyClosed = closed
         closed = true
+        stopKeepalive()
         stateLock.unlock()
         if !alreadyClosed {
             onClosed?()
@@ -98,6 +127,7 @@ final class Signaling: @unchecked Sendable {
     func close() {
         stateLock.lock()
         closed = true
+        stopKeepalive()
         stateLock.unlock()
         task.cancel(with: .normalClosure, reason: nil)
         session.finishTasksAndInvalidate()

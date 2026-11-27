@@ -54,6 +54,8 @@ constexpr std::size_t kMaxReliableMessage = 16 * 1024 * 1024;
 constexpr std::uint32_t kMaxReassemblyChunks = 4096;
 constexpr std::size_t kMaxInflightMessages = 32;
 constexpr auto kReassemblyTimeout = std::chrono::seconds(30);
+// Interval of the signaling WebSocket ping.
+constexpr auto kKeepaliveInterval = std::chrono::seconds(25);
 constexpr std::size_t kMaxBestEffort = 16'000;
 // Pause chunk sends above this bufferedAmount...
 constexpr std::size_t kSendHighWater = 1 << 20;
@@ -1347,7 +1349,14 @@ std::unique_ptr<P2PGame> P2PGame::connect(const ConnectOptions &opts) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
 
     auto ctx = std::make_shared<SignalCtx>();
-    auto ws = std::make_shared<rtc::WebSocket>();
+    // Signaling keepalive: a WebSocket ping (answered by the server's
+    // WebSocket layer, never seen as a lobby message) so an idle proxy
+    // or NAT does not drop the signaling connection mid-game. Set
+    // explicitly either way; zero disables libdatachannel's own default.
+    rtc::WebSocket::Configuration wsConfig;
+    wsConfig.pingInterval = opts.disableKeepalive ? std::chrono::milliseconds(0)
+                                                  : std::chrono::milliseconds(kKeepaliveInterval);
+    auto ws = std::make_shared<rtc::WebSocket>(wsConfig);
 
     ws->onOpen([ctx] {
         std::lock_guard<std::mutex> lock(ctx->m);
