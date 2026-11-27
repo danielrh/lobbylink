@@ -252,9 +252,9 @@ Client to server:
 `ping` is a keepalive. It asks for nothing and the server answers nothing; like any message it counts as a sign of
 life for the silence-based claim timer. A signaling connection has nothing to say while nobody comes or goes, and
 reverse proxies and NATs drop a silent one (Apache's `mod_proxy_wstunnel` after its `Timeout`, 300 s on the
-production proxy); the server then destroys a room `room-empty-ttl` after its last connection went. Native clients
-send WebSocket ping frames (the Rust client, every 25 s). A browser cannot, so a page sends this line instead, every
-25 s. Servers from before `ping` answered it with an `invalid-message` error ("unknown message type") and carried
+production proxy); the server then destroys a room `room-empty-ttl` after its last connection went. The native
+clients (Rust, Go, C++, Swift, Java) send WebSocket ping frames every 25 s. A browser cannot, so the TypeScript
+client (`web/p2p-client.js`) sends this line instead, every 25 s. Each client has a `disableKeepalive` option. Servers from before `ping` answered it with an `invalid-message` error ("unknown message type") and carried
 on; clients that send it ignore that error, so the same line works against old and new servers.
 
 Server to client:

@@ -3,9 +3,12 @@ package xyz.lobbylink.internal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -16,6 +19,13 @@ import xyz.lobbylink.LobbyException;
  * client (no external dependency). Incoming full-text messages and close/error
  * notifications are handed to a {@link Handler}; outgoing sends are serialized
  * (the JDK forbids overlapping sends on one WebSocket).
+ *
+ * <p>Unless disabled, a WebSocket ping goes out every
+ * {@link #KEEPALIVE_SECS} seconds. Once every peer link is up a game sends
+ * nothing over signaling, and reverse proxies and NATs drop a silent
+ * connection (Apache's mod_proxy_wstunnel after its Timeout), after which
+ * nobody else can join. A ping frame is answered by the server's WebSocket
+ * layer and never seen as a lobby message.
  */
 public final class Signaling {
     public interface Handler {
@@ -23,11 +33,15 @@ public final class Signaling {
         void onClosed();
     }
 
+    /** Interval of the signaling keepalive ping. */
+    public static final long KEEPALIVE_SECS = 25;
+
     private final HttpClient client;
     private final WebSocket ws;
     private final Object sendLock = new Object();
     private CompletableFuture<WebSocket> sendChain;
     private volatile Handler handler;
+    private ScheduledExecutorService keepalive; // guarded by sendLock
 
     private Signaling(HttpClient client, WebSocket ws) {
         this.client = client;
@@ -40,6 +54,11 @@ public final class Signaling {
     }
 
     public static Signaling connect(String wsUrl, String origin, long timeoutMs) throws LobbyException {
+        return connect(wsUrl, origin, timeoutMs, true);
+    }
+
+    public static Signaling connect(String wsUrl, String origin, long timeoutMs, boolean keepalive)
+            throws LobbyException {
         HttpClient client = HttpClient.newHttpClient();
         final Signaling[] holder = new Signaling[1];
 
@@ -76,6 +95,7 @@ public final class Signaling {
             }
 
             private void fireClosed() {
+                if (holder[0] != null) holder[0].stopKeepalive();
                 Handler h = holder[0] == null ? null : holder[0].handler;
                 if (h != null) h.onClosed();
             }
@@ -103,7 +123,39 @@ public final class Signaling {
 
         Signaling s = new Signaling(client, ws);
         holder[0] = s;
+        if (keepalive) s.startKeepalive();
         return s;
+    }
+
+    private void startKeepalive() {
+        ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "lobbylink-keepalive");
+            t.setDaemon(true);
+            return t;
+        });
+        synchronized (sendLock) {
+            keepalive = timer;
+        }
+        timer.scheduleWithFixedDelay(this::sendPing, KEEPALIVE_SECS, KEEPALIVE_SECS, TimeUnit.SECONDS);
+        // The socket may have died before the timer was registered.
+        if (ws.isInputClosed() || ws.isOutputClosed()) stopKeepalive();
+    }
+
+    private void stopKeepalive() {
+        synchronized (sendLock) {
+            if (keepalive != null) {
+                keepalive.shutdownNow();
+                keepalive = null;
+            }
+        }
+    }
+
+    private void sendPing() {
+        synchronized (sendLock) {
+            sendChain = sendChain
+                    .thenCompose(w -> w.sendPing(ByteBuffer.allocate(0)))
+                    .exceptionally(e -> ws);
+        }
     }
 
     /** Queue a text frame; sends are chained so they never overlap. */
@@ -116,6 +168,7 @@ public final class Signaling {
     }
 
     public void close() {
+        stopKeepalive();
         try {
             ws.sendClose(WebSocket.NORMAL_CLOSURE, "");
         } catch (Exception ignore) {

@@ -99,6 +99,13 @@ export type ConnectOptions = {
   iceServers?: RTCIceServer[];
   /** Force TURN relay (iceTransportPolicy "relay"); for TURN testing. */
   forceRelay?: boolean;
+  /**
+   * Do not send `{"type":"ping"}` over signaling every 25 s. The ping
+   * keeps reverse proxies and NATs from dropping an idle signaling
+   * connection (after which no one else can join); disable it to test
+   * what a dropped connection does.
+   */
+  disableKeepalive?: boolean;
 };
 
 export type MessageKind = "reliable" | "best-effort";
@@ -200,6 +207,15 @@ const BEST_EFFORT_CHANNEL_ID = 2;
 const MAX_PEER_REBUILDS = 3;
 /** Buffered events before the first onEvent listener registers. */
 const MAX_PENDING_EVENTS = 256;
+
+/**
+ * Interval of the signaling keepalive. A browser cannot send WebSocket
+ * ping frames, so the client sends the lobby message `{"type":"ping"}`,
+ * which the server answers with nothing.
+ */
+const KEEPALIVE_MS = 25_000;
+/** How a server from before `ping` answers one (code "invalid-message"). */
+const OLD_SERVER_PING_REPLY = 'unknown message type "ping"';
 
 const CODE_RE = /^[A-Za-z0-9_-]{4,64}$/;
 
@@ -588,6 +604,7 @@ export class P2PGame {
   private startedFlag: boolean;
   private closedFlag = false;
   private fatalSeen = false;
+  private keepalive: ReturnType<typeof setInterval> | undefined;
   private readonly peers = new Map<number, PeerLink>();
   private readonly linkWaiters = new Map<number, Waiter[]>();
   private readonly sendChains = new Map<number, Promise<void>>();
@@ -709,7 +726,17 @@ export class P2PGame {
     ws.onerror = () => {
       /* onclose carries the state change */
     };
+    if (!opts.disableKeepalive) {
+      this.keepalive = setInterval(() => {
+        try {
+          if (ws.readyState === WebSocket.OPEN) ws.send('{"type":"ping"}');
+        } catch {
+          /* onclose carries the state change */
+        }
+      }, KEEPALIVE_MS);
+    }
     ws.onclose = () => {
+      this.stopKeepalive();
       if (this.closedFlag || this.fatalSeen) return;
       this.fatalSeen = true;
       this.emit({
@@ -830,6 +857,7 @@ export class P2PGame {
   close(): void {
     if (this.closedFlag) return;
     this.closedFlag = true;
+    this.stopKeepalive();
     try {
       if (this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: "leave" }));
@@ -934,6 +962,13 @@ export class P2PGame {
             }
           }
           this.emit({ type: "signaling-closed", code: msg.code, message: msg.message });
+        } else if (
+          this.keepalive !== undefined &&
+          msg.code === "invalid-message" &&
+          msg.message.includes(OLD_SERVER_PING_REPLY)
+        ) {
+          // A server from before the ping message; the traffic still
+          // kept the connection alive, which is all the ping is for.
         } else {
           this.emit({ type: "lobby-error", code: msg.code, message: msg.message });
         }
@@ -957,6 +992,13 @@ export class P2PGame {
   }
 
   // -- WebRTC signaling -------------------------------------------------------
+
+  private stopKeepalive(): void {
+    if (this.keepalive !== undefined) {
+      clearInterval(this.keepalive);
+      this.keepalive = undefined;
+    }
+  }
 
   private sendSignal(to: number, payload: SignalPayload): void {
     if (this.ws.readyState !== WebSocket.OPEN) return;

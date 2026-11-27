@@ -107,6 +107,9 @@ struct ConnectOptions {
     std::vector<ICEServer> iceServers;
     // Force TURN relay (iceTransportPolicy "relay"); for TURN testing.
     bool forceRelay = false;
+    // Turns off the WebSocket ping sent every 25s to keep proxies and
+    // NATs from dropping an idle signaling connection.
+    bool disableKeepalive = false;
     // Bounds the join handshake; <= 0 means 20s.
     std::chrono::milliseconds connectTimeout{0};
 

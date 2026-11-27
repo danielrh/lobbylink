@@ -59,7 +59,8 @@ public final class P2PGame: @unchecked Sendable {
         let origin = options.origin ?? Wire.defaultOrigin(urlString)
         let timeout = options.connectTimeout > 0 ? options.connectTimeout : 20
 
-        let signaling = Signaling(url: url, origin: origin, timeout: timeout)
+        let signaling = Signaling(url: url, origin: origin, timeout: timeout,
+                                  keepalive: !options.disableKeepalive)
         let game = P2PGame(options: options, signaling: signaling)
         signaling.onText = { [weak game] text in game?.handleRaw(text) }
         signaling.onClosed = { [weak game] in game?.handleTransportClosed() }
